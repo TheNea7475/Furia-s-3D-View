@@ -528,7 +528,7 @@ class GraphView extends ItemView {
             this.composer.addPass(renderScene);
             this.composer.addPass(this.bloomPass);
             //Apply stored settings for composer!
-            this.plugin.updateSettingsParameters();
+            //this.plugin.updateSettingsParameters();
 
 
 			// Controls section
@@ -557,6 +557,8 @@ class GraphView extends ItemView {
 			this.gravityGraph = new GravityGraph(this.scene);
 			
 
+
+            /*
             // Applying settings
             if (this.plugin && this.plugin.settings && this.plugin.settings.forces) {
                 this.gravityGraph.forces = {
@@ -571,6 +573,7 @@ class GraphView extends ItemView {
             if (this.plugin?.settings?.maxVisibleDistance !== undefined) {
                 this.gravityGraph.maxVisibleDistance = this.plugin.settings.maxVisibleDistance;
             }
+            */
 
 			// Listen for active leaf changes, used for auto node focusing
 			this.activeLeafChangeHandler = () => {
@@ -629,6 +632,7 @@ class GraphView extends ItemView {
 				}
 			});
 
+
 			// Main animation loop
 			let lastTime = performance.now();
 			const animate = () => {
@@ -653,9 +657,6 @@ class GraphView extends ItemView {
             // Listener for zoom-to-move logic. instead of zooming move in 3d
             this.renderer.domElement.addEventListener('wheel', this.handleWheelMovement);
 
-            // Listen for window resize
-            //window.addEventListener("resize", this.handleResize);
-
             
             // Use ResizeObserver to detect container size changes (panel collapse/expand)
             this.resizeObserver = new ResizeObserver(() => {
@@ -666,8 +667,9 @@ class GraphView extends ItemView {
             this.resizeObserver.observe(container);
             
 
-			//Calls
-			//this.handleResize();
+			//End calls
+
+
 		}, 100); //scene rendering delay
 	}
 
