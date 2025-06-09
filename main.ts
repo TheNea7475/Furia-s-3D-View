@@ -38,9 +38,9 @@ const DEFAULT_SETTINGS: PluginSettings = {
     },
     maxVisibleDistance: 15,
     baseNodeScale: 1,
-    bloomStrength: 0.5,
+    bloomStrength: 2,
     bloomRadius: 0.1,
-    bloomThreshold: 0.3,
+    bloomThreshold: 0.9,
 }
 
 
@@ -527,9 +527,6 @@ class GraphView extends ItemView {
             this.composer = new EffectComposer(this.renderer);
             this.composer.addPass(renderScene);
             this.composer.addPass(this.bloomPass);
-            //Apply stored settings for composer!
-            //this.plugin.updateSettingsParameters();
-
 
 			// Controls section
 			const stopAutoRotate = () => {
@@ -556,7 +553,8 @@ class GraphView extends ItemView {
 			// Initialize gravity graph system
 			this.gravityGraph = new GravityGraph(this.scene);
 			
-
+            //Apply stored settings
+            this.plugin.updateSettingsParameters();
 
             /*
             // Applying settings
@@ -635,20 +633,22 @@ class GraphView extends ItemView {
 
 			// Main animation loop
 			let lastTime = performance.now();
-			const animate = () => {
-				if (this.focusing && this.focusedNode) {
-					this.controls.target.copy(this.focusedNode.position);
-				}
-				this.controls.update();
-				const currentTime = performance.now();
-				const deltaTime = (currentTime - lastTime) / 1000; // delta time in seconds
-				lastTime = currentTime;
-				this.gravityGraph.updateParticles(deltaTime);
-				this.animationFrameId = requestAnimationFrame(animate);
-				this.controls.update();
-				//this.renderer.render(this.scene, this.camera);
-                this.composer.render();
-			};
+            const animate = () => {
+                if (this.focusing && this.focusedNode) {
+                    this.controls.target.copy(this.focusedNode.position);
+                }
+                
+                this.controls.update(); // Remove duplicate call
+                
+                const currentTime = performance.now();
+                const deltaTime = (currentTime - lastTime) / 1000;
+                lastTime = currentTime;
+                
+                this.gravityGraph.updateParticles(deltaTime);
+                this.composer.render(); // Single render call
+                
+                this.animationFrameId = requestAnimationFrame(animate);
+            };
 			animate();
 
 
@@ -868,15 +868,39 @@ class GraphView extends ItemView {
 	}
 
 	async onClose() {
-		// Stop gravity simulation
-		if (this.gravityGraph) {
-			this.gravityGraph.stop();
-		}
-		
-		cancelAnimationFrame(this.animationFrameId);
+
+        if (this.gravityGraph) {
+            this.gravityGraph.stop();
+        }
+        
+        if (this.wheelAnimationId) {
+            cancelAnimationFrame(this.wheelAnimationId);
+        }
+        
+        cancelAnimationFrame(this.animationFrameId);
+        
+        // Dispose Three.js resources
+        if (this.scene) {
+            this.scene.traverse((object) => {
+                if (object instanceof THREE.Mesh) {
+                    object.geometry?.dispose();
+                    if (Array.isArray(object.material)) {
+                        object.material.forEach(mat => mat.dispose());
+                    } else {
+                        object.material?.dispose();
+                    }
+                }
+            });
+        }
+        
         if (this.renderer) {
-		this.renderer.dispose();
-        };
+            this.renderer.dispose();
+        }
+        
+        if (this.composer) {
+            this.composer.dispose();
+        }
+		
 
         // Remove
         if (this.resizeObserver) {
