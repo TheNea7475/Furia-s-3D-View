@@ -1,77 +1,92 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, ItemView } from 'obsidian';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+
+
 
 // Remember to rename these classes and interfaces!
+// Constants
+const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
 
-interface MyPluginSettings {
-	mySetting: string;
+
+interface PluginSettings {
+    forces: {
+        gravity: number;
+        repulsion: number;
+        damping: number;
+        centerAttraction: number;
+        linkStrength: number;
+    };
+    maxVisibleDistance: number
+    baseNodeScale: number
+    bloomStrength: number;
+    bloomRadius: number;
+    bloomThreshold: number;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: PluginSettings = {
+    forces: {
+        gravity: 0.02,
+        repulsion: 0.8,
+        damping: 0.90,
+        centerAttraction: 0.001,
+        linkStrength: 0.03
+    },
+    maxVisibleDistance: 15,
+    baseNodeScale: 1,
+    bloomStrength: 0.5,
+    bloomRadius: 0.1,
+    bloomThreshold: 0.3,
 }
+
 
 export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+	settings: PluginSettings;
+	graphView: GraphView | null = null; // Add reference to GraphView
 
 	async onload() {
+
+		//Await settings to be loaded
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		//Register the graph view
+		const plugin = this; // Capture reference
+		this.registerView(
+			VIEW_TYPE_3D_GRAPH,
+			(leaf) => {
+				const view = new GraphView(leaf);
+				(view as any).plugin = plugin;
+				plugin.graphView = view;
+				return view;
+			}
+		);
+
+		const ribbonIconEl = this.addRibbonIcon("globe", "Open 3D Graph", async () => {
+			new Notice("Opening the graph!");
+			await this.activateView();
 		});
+
+
+        //Might use those features later
+
 		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		//ribbonIconEl.addClass('my-plugin-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		//const statusBarItemEl = this.addStatusBarItem();
+		//statusBarItemEl.setText('Status Bar Text');
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+		this.addSettingTab(new SettingsTab(this.app, this));
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
 		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
 		});
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
@@ -82,6 +97,38 @@ export default class MyPlugin extends Plugin {
 
 	}
 
+	// Update parameters from settings
+	updateSettingsParameters() {
+
+        //Check graph existance and update its properties if it exists
+		if (this.graphView && this.graphView.gravityGraph) {
+
+            // Update forces in the GraphView's GravityGraph
+			this.graphView.gravityGraph.forces = {
+				gravity: this.settings.forces.gravity,
+				repulsion: this.settings.forces.repulsion,
+				damping: this.settings.forces.damping,
+				centerAttraction: this.settings.forces.centerAttraction,
+				linkStrength: this.settings.forces.linkStrength
+			};
+
+		    // Update labels max distance in the GraphView's GravityGraph if it exists
+			this.graphView.gravityGraph.maxVisibleDistance = this.settings.maxVisibleDistance;
+
+            // Update nodes dimensions and trigger the rescaling of nodes
+            this.graphView.gravityGraph.baseNodeScale = this.settings.baseNodeScale;
+            this.graphView.gravityGraph.updateNodeScales();
+
+            //Update bloom settings, if composer ready
+            if (this.graphView.bloomPass) {
+            this.graphView.bloomPass.strength = this.settings.bloomStrength;
+            this.graphView.bloomPass.radius = this.settings.bloomRadius;
+            this.graphView.bloomPass.threshold = this.settings.bloomThreshold;
+            }
+        }
+    }
+
+
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 	}
@@ -89,25 +136,26 @@ export default class MyPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+
+    async activateView() {
+        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH);
+        if (leaves.length === 0) {
+            // Open in center area as new tab
+            const leaf = this.app.workspace.getLeaf('tab');
+            await leaf.setViewState({
+                type: VIEW_TYPE_3D_GRAPH,
+                active: true,
+            });
+        } else {
+            this.app.workspace.revealLeaf(leaves[0]);
+        }
+    }
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
+// Settings
+class SettingsTab extends PluginSettingTab {
 	plugin: MyPlugin;
 
 	constructor(app: App, plugin: MyPlugin) {
@@ -120,15 +168,1336 @@ class SampleSettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
+		// Forces settings header
+		new Setting(containerEl).setName('Physics forces').setHeading();
+
+		// Gravity setting
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+			.setName('Gravity')
+			.setDesc('Controls downward force applied to nodes. Actually useless to change at the moment')
+			.addSlider(slider => slider
+				.setLimits(0, 0.1, 0.001)
+				.setValue(this.plugin.settings.forces?.gravity ?? 0.02)
+				.setDynamicTooltip()
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					if (!this.plugin.settings.forces) {
+						this.plugin.settings.forces = {
+							gravity: 0.02,
+							repulsion: 0.8,
+							damping: 0.90,
+							centerAttraction: 0.001,
+							linkStrength: 0.03
+						};
+					}
+					this.plugin.settings.forces.gravity = value;
 					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
 				}));
+
+		// Repulsion setting
+		new Setting(containerEl)
+			.setName('Repulsion')
+			.setDesc('Controls how strongly nodes repel each other')
+			.addSlider(slider => slider
+				.setLimits(0, 2, 0.01)
+				.setValue(this.plugin.settings.forces?.repulsion ?? 0.8)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.forces) {
+						this.plugin.settings.forces = {
+							gravity: 0.02,
+							repulsion: 0.8,
+							damping: 0.90,
+							centerAttraction: 0.001,
+							linkStrength: 0.03
+						};
+					}
+					this.plugin.settings.forces.repulsion = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+		// Damping setting
+		new Setting(containerEl)
+			.setName('Damping')
+			.setDesc('Controls velocity decay (Higer = more movement)')
+			.addSlider(slider => slider
+				.setLimits(0.1, 1, 0.01)
+				.setValue(this.plugin.settings.forces?.damping ?? 0.90)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.forces) {
+						this.plugin.settings.forces = {
+							gravity: 0.02,
+							repulsion: 0.8,
+							damping: 0.90,
+							centerAttraction: 0.001,
+							linkStrength: 0.03
+						};
+					}
+					this.plugin.settings.forces.damping = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+		// Center Attraction setting
+		new Setting(containerEl)
+			.setName('Center attraction')
+			.setDesc('Controls how strongly nodes are pulled to center')
+			.addSlider(slider => slider
+				.setLimits(0, 0.1, 0.001)
+				.setValue(this.plugin.settings.forces?.centerAttraction ?? 0.001)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.forces) {
+						this.plugin.settings.forces = {
+							gravity: 0.02,
+							repulsion: 0.8,
+							damping: 0.90,
+							centerAttraction: 0.001,
+							linkStrength: 0.03
+						};
+					}
+					this.plugin.settings.forces.centerAttraction = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+		// Link Strength setting
+		new Setting(containerEl)
+			.setName('Link strength')
+			.setDesc('Controls how strongly connected nodes attract each other')
+			.addSlider(slider => slider
+				.setLimits(0, 0.1, 0.001)
+				.setValue(this.plugin.settings.forces?.linkStrength ?? 0.03)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.forces) {
+						this.plugin.settings.forces = {
+							gravity: 0.02,
+							repulsion: 0.8,
+							damping: 0.90,
+							centerAttraction: 0.001,
+							linkStrength: 0.03
+						};
+					}
+					this.plugin.settings.forces.linkStrength = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+		// Reset to defaults button
+		new Setting(containerEl)
+			.setName('Reset Forces')
+			.setDesc('Reset all force values to their defaults')
+			.addButton(button => button
+				.setButtonText('Reset to Defaults')
+				.onClick(async () => {
+					this.plugin.settings.forces = {
+						gravity: 0.02,
+						repulsion: 0.8,
+						damping: 0.90,
+						centerAttraction: 0.001,
+						linkStrength: 0.03
+					};
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+					this.display(); // Refresh the UI
+				}));
+
+
+    	// View settings header
+        new Setting(containerEl).setName('View').setHeading();
+
+        // View settings
+		new Setting(containerEl)
+			.setName('Label text distance')
+			.setDesc('Controls how far are nodes name rendered with a label')
+			.addSlider(slider => slider
+				.setLimits(1, 50, 1)
+				.setValue(this.plugin.settings.maxVisibleDistance ?? 8)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.maxVisibleDistance) {
+						this.plugin.settings.maxVisibleDistance = 8
+					}
+					this.plugin.settings.maxVisibleDistance = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+            // base node dimension
+            new Setting(containerEl)
+			.setName('Scale node')
+			.setDesc("Make nodes appear bigger or smaller, it won't affect physics")
+			.addSlider(slider => slider
+				.setLimits(0.1, 5, 0.1)
+				.setValue(this.plugin.settings.baseNodeScale ?? 1)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.baseNodeScale) {
+						this.plugin.settings.baseNodeScale = 1
+					}
+					this.plugin.settings.baseNodeScale = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+
+            // Bloom settings
+            new Setting(containerEl).setName('Bloom').setHeading().setDesc("Pretty resource intensive");
+
+            // Bloom strenght
+            new Setting(containerEl)
+            .setName('Bloom strength')
+            .setDesc('Controls the intensity of the bloom effect')
+            .addSlider(slider => slider
+                .setLimits(0, 3, 0.1)
+                .setValue(this.plugin.settings.bloomStrength ?? 0.5)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    if (!this.plugin.settings.bloomStrength) {
+                        this.plugin.settings.bloomStrength = 0.5;
+                    }
+                    this.plugin.settings.bloomStrength = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.updateSettingsParameters();
+                }));
+
+            // Bloom radius
+            new Setting(containerEl)
+            .setName('Bloom radius')
+            .setDesc('Controls how far the bloom effect spreads')
+            .addSlider(slider => slider
+                .setLimits(0, 1, 0.05)
+                .setValue(this.plugin.settings.bloomRadius ?? 0.1)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    if (!this.plugin.settings.bloomRadius) {
+                        this.plugin.settings.bloomRadius = 0.1;
+                    }
+                    this.plugin.settings.bloomRadius = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.updateSettingsParameters();
+                }));
+
+            // Bloom threshold
+            new Setting(containerEl)
+            .setName('Bloom threshold')
+            .setDesc('Controls which brightness levels trigger the bloom effect')
+            .addSlider(slider => slider
+                .setLimits(0, 1, 0.05)
+                .setValue(this.plugin.settings.bloomThreshold ?? 0.3)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    if (!this.plugin.settings.bloomThreshold) {
+                        this.plugin.settings.bloomThreshold = 0.3;
+                    }
+                    this.plugin.settings.bloomThreshold = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.updateSettingsParameters();
+                }));
+
+
+
 	}
+}
+
+
+class GraphView extends ItemView {
+	static readonly VIEW_TYPE = VIEW_TYPE_3D_GRAPH;
+    plugin: MyPlugin;
+	scene: THREE.Scene;
+	camera: THREE.PerspectiveCamera;
+	renderer: THREE.WebGLRenderer;
+    composer: EffectComposer;
+    bloomPass: UnrealBloomPass;
+	controls: OrbitControls;
+	animationFrameId: number;
+	gravityGraph: GravityGraph;
+	focusing: boolean = false;
+	focusedNode: THREE.Object3D;
+	activeLeafChangeHandler: () => void;
+    resizeObserver: ResizeObserver;
+    wheelAnimationId: number | null = null;
+    currentWheelVelocity: number = 0;
+    wheelDamping: number = 0.90;
+    nodeAdditionTimer: number | null = null;
+    allFiles: any[] = [];
+    allLinks: Array<[string, string]> = [];
+    currentNodeIndex: number = 0;
+    currentLinkIndex: number = 0;
+    nodeAddDelay: number = 5;
+    linkAddDelay: number = 5;
+
+	constructor(leaf: WorkspaceLeaf) {
+		super(leaf);
+	}
+
+	getViewType(): string {
+		return GraphView.VIEW_TYPE;
+	}
+
+	getDisplayText(): string {
+		return "3D Graph";
+	}
+
+    getIcon(): string {
+        return "globe";
+    }
+
+	async onOpen() {
+		//Creating container for graph
+		const container = this.containerEl.children[1] as HTMLElement;
+		container.empty();
+		container.style.display = "flex";
+		container.style.justifyContent = "center";
+		container.style.alignItems = "center";
+		container.style.overflow = "hidden";
+
+		// Create canvas
+		const canvas = document.createElement("canvas");
+		canvas.style.width = "100%";
+		canvas.style.height = "100%";
+		canvas.style.display = "block";
+		canvas.style.margin = "0";
+		container.appendChild(canvas);
+
+		// Retrieving vault notes and their links
+		const metadataCache = this.app.metadataCache;
+		const vault = this.app.vault;
+		const files = vault.getMarkdownFiles();
+		const links: Array<[string, string]> = [];
+
+		// Collect all links
+		for (const file of files) {
+			const path = file.path;
+			const basename = file.basename;
+			// Get links from frontmatter and wikilinks
+			const resolvedLinks = metadataCache.resolvedLinks[path];
+			if (resolvedLinks) {
+				for (const target in resolvedLinks) {
+					const targetFile = this.app.metadataCache.getFirstLinkpathDest(target, path);
+					if (targetFile) {
+						links.push([basename, targetFile.basename]);
+					}
+				}
+			}
+		}
+
+
+        // Store files and links for gradual addition
+        this.allFiles = files;
+        this.allLinks = links;
+
+
+
+		// Simulating then rendering - Delayed so layout has time to stabilize
+		setTimeout(() => {
+			let width = container.offsetWidth || 600;
+			let height = container.offsetHeight || 400;
+			
+			this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+			this.renderer.setSize(width, height);
+			this.renderer.setPixelRatio(window.devicePixelRatio);
+            this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            this.renderer.toneMappingExposure = 1;
+            this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+
+			this.scene = new THREE.Scene();
+			this.camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+			this.camera.position.z = 15; // Move camera back to see the whole graph
+
+            // Ambient light
+			const ambientLight = new THREE.AmbientLight(0xffffff, 2); // Strong white light
+			this.scene.add(ambientLight);
+
+
+            // Composer with multiple pass
+            const renderScene = new RenderPass(this.scene, this.camera);
+            this.bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(width, height),
+                this.plugin.settings.bloomStrength, // strength
+                this.plugin.settings.bloomRadius, // radius
+                this.plugin.settings.bloomThreshold // threshold
+            );
+            this.bloomPass.resolution = new THREE.Vector2(256, 256);
+
+            this.composer = new EffectComposer(this.renderer);
+            this.composer.addPass(renderScene);
+            this.composer.addPass(this.bloomPass);
+            //Apply stored settings for composer!
+            this.plugin.updateSettingsParameters();
+
+
+			// Controls section
+			const stopAutoRotate = () => {
+				if (this.focusing) {
+					this.controls.autoRotate = false;
+					this.focusing = false;
+				}
+			};
+			this.renderer.domElement.addEventListener('pointerdown', stopAutoRotate);
+			this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+			this.controls.enableDamping = true;
+			this.controls.dampingFactor = 0.1;
+			this.controls.enableZoom = false;
+
+			this.controls.mouseButtons = {
+				LEFT: THREE.MOUSE.PAN,
+				MIDDLE: null,
+				RIGHT: THREE.MOUSE.ROTATE,
+			};
+
+			// prevent OrbitControls from intercepting wheel events
+			this.controls.listenToKeyEvents = () => {}; // Hack to avoid some internal bindings
+
+			// Initialize gravity graph system
+			this.gravityGraph = new GravityGraph(this.scene);
+			
+
+            // Applying settings
+            if (this.plugin && this.plugin.settings && this.plugin.settings.forces) {
+                this.gravityGraph.forces = {
+                    gravity: this.plugin.settings.forces.gravity,
+                    repulsion: this.plugin.settings.forces.repulsion,
+                    damping: this.plugin.settings.forces.damping,
+                    centerAttraction: this.plugin.settings.forces.centerAttraction,
+                    linkStrength: this.plugin.settings.forces.linkStrength
+                };
+            }
+            // Apply initial labels max distance setting
+            if (this.plugin?.settings?.maxVisibleDistance !== undefined) {
+                this.gravityGraph.maxVisibleDistance = this.plugin.settings.maxVisibleDistance;
+            }
+
+			// Listen for active leaf changes, used for auto node focusing
+			this.activeLeafChangeHandler = () => {
+				const activeNoteName = this.getCurrentActiveNote();
+				if (activeNoteName) {
+					this.focusOnNodeByName(activeNoteName);
+				}
+			};
+			this.app.workspace.on('active-leaf-change', this.activeLeafChangeHandler);
+
+
+            // this has been REPLACED WITH GRADUAL ADDITION. Nodes are stored before the timeout for rendering
+			/* Add all nodes to gravity system (GravityGraph will create meshes)
+			for (const file of files) {
+				this.gravityGraph.addNode(file.basename);
+			}
+
+			// Add all links to gravity system
+			for (const [from, to] of links) {
+				this.gravityGraph.addLink(from, to);
+			}
+            */
+
+            // Start adding nodes gradually after a short delay.
+            
+            setTimeout(() => {
+                this.startNodeAddition();
+            }, 500);
+            
+
+			// Initialize positions and start physics simulation
+			this.gravityGraph.initializePositions();
+			this.gravityGraph.start(this.camera);
+			this.gravityGraph.setParticleSpawnRate(10);
+			this.gravityGraph.setMaxParticles(10000);
+
+
+			//Adding a raycaster for mouse clicking
+			const raycaster = new THREE.Raycaster();
+			const mouse = new THREE.Vector2();
+			this.renderer.domElement.addEventListener('click', (event) => {
+				// Convert mouse coordinates to normalized device coordinates
+				const rect = this.renderer.domElement.getBoundingClientRect();
+				mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+				mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+				raycaster.setFromCamera(mouse, this.camera);
+
+				// Get clickable nodes from gravity graph
+				const clickableNodes = Array.from(this.gravityGraph.nodes.values());
+
+				const intersects = raycaster.intersectObjects(clickableNodes);
+				if (intersects.length > 0) {
+					const targetNode = intersects[0].object;
+					this.focusOnNode(targetNode);
+				}
+			});
+
+			// Main animation loop
+			let lastTime = performance.now();
+			const animate = () => {
+				if (this.focusing && this.focusedNode) {
+					this.controls.target.copy(this.focusedNode.position);
+				}
+				this.controls.update();
+				const currentTime = performance.now();
+				const deltaTime = (currentTime - lastTime) / 1000; // delta time in seconds
+				lastTime = currentTime;
+				this.gravityGraph.updateParticles(deltaTime);
+				this.animationFrameId = requestAnimationFrame(animate);
+				this.controls.update();
+				//this.renderer.render(this.scene, this.camera);
+                this.composer.render();
+			};
+			animate();
+
+
+			// Event listeners
+
+            // Listener for zoom-to-move logic. instead of zooming move in 3d
+            this.renderer.domElement.addEventListener('wheel', this.handleWheelMovement);
+
+            // Listen for window resize
+            //window.addEventListener("resize", this.handleResize);
+
+            
+            // Use ResizeObserver to detect container size changes (panel collapse/expand)
+            this.resizeObserver = new ResizeObserver(() => {
+                    this.handleResize();
+                    console.log("ResizeObserver triggered");
+            });
+
+            this.resizeObserver.observe(container);
+            
+
+			//Calls
+			//this.handleResize();
+		}, 100); //scene rendering delay
+	}
+
+    // Graph used methods
+
+    startNodeAddition = () => {
+        const addNextNode = () => {
+            if (this.currentNodeIndex < this.allFiles.length) {
+                const file = this.allFiles[this.currentNodeIndex];
+                this.gravityGraph.addNode(file.basename);
+                
+                // Get the newly added node and give it a random position
+                const newNode = this.gravityGraph.nodes.get(file.basename);
+                if (newNode) {
+                    // Random position in a sphere around origin
+                    const spread = 8; // Same as initializePositions spread
+                    const x = (Math.random() - 0.5) * spread;
+                    const z = (Math.random() - 0.5) * spread;
+                    const y = (Math.random() - 0.5) * spread * 0.3;
+                    
+                    newNode.position.set(x, y, z);
+                    
+                    // Give it some initial velocity for more dynamic appearance
+                    if ((newNode as any).velocity) {
+                        (newNode as any).velocity.set(
+                            (Math.random() - 0.5) * 0.1,
+                            (Math.random() - 0.5) * 0.1,
+                            (Math.random() - 0.5) * 0.1
+                        );
+                    }
+                }
+                
+                this.currentNodeIndex++;
+                this.nodeAdditionTimer = setTimeout(addNextNode, this.nodeAddDelay) as unknown as number;
+            } else {
+                // All nodes added, start adding links
+                setTimeout(() => {
+                    this.startLinkAddition();
+                }, 200);
+            }
+        };
+        addNextNode();
+    };
+
+    startLinkAddition = () => {
+        const addNextLink = () => {
+            if (this.currentLinkIndex < this.allLinks.length) {
+                const [from, to] = this.allLinks[this.currentLinkIndex];
+                this.gravityGraph.addLink(from, to);
+                this.currentLinkIndex++;
+                
+                this.nodeAdditionTimer = setTimeout(addNextLink, this.linkAddDelay) as unknown as number;
+            }
+        };
+        addNextLink();
+    };
+
+    handleWheelMovement = (event: WheelEvent) => {
+        event.preventDefault();
+
+        const speed = 0.35;
+        const delta = (event.deltaY > 0 ? -1 : 1) * speed;
+        
+        // Add to current velocity instead of replacing it
+        this.currentWheelVelocity += delta;
+
+        // Start smooth movement if not already running
+        if (!this.wheelAnimationId) {
+            const smoothMove = () => {
+                if (Math.abs(this.currentWheelVelocity) > 0.1) {
+                    const direction = new THREE.Vector3();
+                    this.camera.getWorldDirection(direction);
+
+                    this.camera.position.addScaledVector(direction, this.currentWheelVelocity);
+                    this.controls.target.addScaledVector(direction, this.currentWheelVelocity);
+
+                    // Apply damping
+                    this.currentWheelVelocity *= this.wheelDamping;
+
+                    this.wheelAnimationId = requestAnimationFrame(smoothMove);
+                } else {
+                    this.wheelAnimationId = null;
+                    this.currentWheelVelocity = 0;
+                }
+            };
+            smoothMove();
+        }
+    };
+
+	handleResize = () => {
+        setTimeout(() => {
+        if (!this.renderer || !this.camera || !this.controls) return;
+        const container = this.containerEl.children[1] as HTMLElement;
+        const width = container.offsetWidth || 600;
+        const height = container.offsetHeight || 400;
+        this.renderer.setSize(container.offsetWidth, container.offsetHeight);
+        this.camera.aspect = width / height;
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.camera.updateProjectionMatrix();
+        this.composer.setPixelRatio(window.devicePixelRatio);
+        this.composer.setSize(container.offsetWidth,container.offsetHeight);
+        }, 10);
+
+	};
+
+    focusOnNode(targetNode: THREE.Object3D): void {
+        new Notice(targetNode.userData.noteTitle);
+
+        // Disable standard controls
+        this.controls.enabled = false;
+        this.controls.autoRotate = false;
+        
+        const distance = 5;
+        const rotationSpeed = 0.002;
+        let angle = 0;
+        
+        // Animation setup
+        let animationPhase = 'flying'; // 'flying' or 'rotating'
+        let t = 0;
+        const flyDuration = 100;
+        const startPos = this.camera.position.clone();
+        const startTarget = this.controls.target.clone();
+        
+        // Calculate target position for flying animation
+        const currentTargetPos = targetNode.position.clone();
+        const desiredDirection = startPos.clone().sub(currentTargetPos).normalize();
+        const desiredCameraPos = currentTargetPos.clone().add(desiredDirection.clone().multiplyScalar(distance));
+        
+        // Calculate initial angle for rotation phase
+        angle = Math.atan2(desiredDirection.z, desiredDirection.x);
+        
+        this.focusedNode = targetNode;
+        this.focusing = true;
+        
+        const animate = () => {
+            if (!this.focusing || this.focusedNode !== targetNode) {
+                // Re-enable controls when stopping
+                this.controls.enabled = true;
+                this.controls.update();
+                return;
+            }
+            
+            const nodePos = targetNode.position.clone();
+            
+            if (animationPhase === 'flying') {
+                // Flying animation phase
+                t++;
+                const alpha = t / flyDuration;
+                
+                // Recalculate target position in case node moved
+                const currentDesiredPos = nodePos.clone().add(desiredDirection.clone().multiplyScalar(distance));
+                
+                this.camera.position.lerpVectors(startPos, currentDesiredPos, alpha);
+                this.controls.target.lerpVectors(startTarget, nodePos, alpha);
+                this.controls.update();
+                
+                if (t >= flyDuration) {
+                    animationPhase = 'rotating';
+                }
+            } else {
+                // Rotation phase
+                const x = nodePos.x + Math.cos(angle) * distance;
+                const z = nodePos.z + Math.sin(angle) * distance;
+                const y = nodePos.y;
+                
+                this.camera.position.set(x, y, z);
+                this.camera.lookAt(nodePos);
+                
+                angle += rotationSpeed;
+            }
+            
+            //this.renderer.render(this.scene, this.camera);
+            this.composer.render()
+            requestAnimationFrame(animate);
+        };
+        
+        animate();
+    }
+
+	getCurrentActiveNote(): string | null {
+		const activeLeaf = this.app.workspace.activeLeaf;
+		if (activeLeaf?.view.getViewType() === 'markdown') {
+			const markdownView = activeLeaf.view as any;
+			return markdownView.file?.basename || null;
+		}
+		return null;
+	}
+
+	focusOnNodeByName(noteName: string): void {
+		const targetNode = Array.from(this.gravityGraph.nodes.values())
+			.find(node => node.userData.noteTitle === noteName);
+		
+		if (targetNode) {
+			this.focusOnNode(targetNode);
+		}
+	}
+
+	async onClose() {
+		// Stop gravity simulation
+		if (this.gravityGraph) {
+			this.gravityGraph.stop();
+		}
+		
+		cancelAnimationFrame(this.animationFrameId);
+        if (this.renderer) {
+		this.renderer.dispose();
+        };
+
+        // Remove
+        if (this.resizeObserver) {
+        this.resizeObserver.disconnect();
+        };
+
+        // CLean resize listeners
+		window.removeEventListener("resize", this.handleResize);
+
+		// Remove workspace listener
+		if (this.activeLeafChangeHandler) {
+			this.app.workspace.off('active-leaf-change', this.activeLeafChangeHandler);
+        };
+
+        // Remove wheel animation listener
+        this.renderer.domElement.removeEventListener('wheel', this.handleWheelMovement);
+
+        // Clean note addition timer
+        if (this.nodeAdditionTimer) {
+            clearTimeout(this.nodeAdditionTimer);
+        }
+
+        //DOM cleanup
+		this.contentEl.empty();
+
+	}
+}
+
+// Updated GravityGraph class that handles node creation internally
+class GravityGraph {
+    scene: THREE.Scene;
+    nodes: Map<string, THREE.Object3D>;
+    labels: Map<string, THREE.Sprite>;
+    links: Array<{from: THREE.Object3D, to: THREE.Object3D, line: THREE.Line}>;
+    forces: {
+        gravity: number;
+        repulsion: number;
+        damping: number;
+        centerAttraction: number;
+        linkStrength: number;
+    };
+    isRunning: boolean;
+    animationId: number | null;
+    particleSystem: LinkParticleSystem;
+    velocityTreshold: number = 0.001; //0 to deactivate
+    maxVisibleDistance: number = 8;
+    baseNodeScale: number = 1;
+    
+    // Color pulsing properties
+    colorPulseData: Map<string, {
+        phase: number;
+        speed: number;
+        baseColor: THREE.Color;
+        pulseColor: THREE.Color;
+    }>;
+
+    constructor(scene: THREE.Scene) {
+        this.scene = scene;
+        this.nodes = new Map<string, THREE.Object3D>();
+        this.labels = new Map<string, THREE.Sprite>();
+        this.links = [];
+        this.forces = {
+            gravity: 0.02,
+            repulsion: 0.8,
+            damping: 0.90,	
+            centerAttraction: 0.001,
+            linkStrength: 0.03
+        };
+        this.isRunning = false;
+        this.animationId = null;
+        this.particleSystem = new LinkParticleSystem(scene);
+        this.colorPulseData = new Map();
+    }
+
+    createTextSprite(text: string, parameters: any = {}): THREE.Sprite {
+        const fontsize = parameters.fontsize || 18;
+        const textColor = parameters.textColor || { r: 255, g: 255, b: 255, a: 1.0 };
+        const backgroundColor = parameters.backgroundColor || { r: 0, g: 0, b: 0, a: 0.8 };
+        
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d')!;
+        
+        // Set font and measure text
+        context.font = `${fontsize * 2}px Arial`; // 2x size for sharpness
+        const textWidth = context.measureText(text).width;
+        
+        // Set canvas size
+        canvas.width = textWidth + 16;
+        canvas.height = fontsize * 3;
+        
+        // Configure for sharp rendering
+        context.imageSmoothingEnabled = false;
+        context.font = `${fontsize * 2}px Arial`;
+        
+        // Draw background
+        context.fillStyle = `rgba(${backgroundColor.r},${backgroundColor.g},${backgroundColor.b},${backgroundColor.a})`;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw text
+        context.fillStyle = `rgba(${textColor.r},${textColor.g},${textColor.b},${textColor.a})`;
+        context.fillText(text, 8, fontsize * 1.5);
+        
+        // Create sprite
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.generateMipmaps = false;
+        texture.magFilter = THREE.NearestFilter;
+        texture.minFilter = THREE.NearestFilter;
+        
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ 
+            map: texture,
+            transparent: true
+        }));
+        
+        // Scale to desired size
+        const scale = 0.005;
+        sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
+        
+        return sprite;
+    }
+
+    // Updated addNode method that creates the mesh internally
+    addNode(title: string): void {
+        // Create the node mesh
+        const geometry = new THREE.SphereGeometry(0.3, 16, 16);
+        const material = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+        	emissive: 0xffffff,
+	        emissiveIntensity: 0.5,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.userData.noteTitle = title;
+
+        // Add physics properties to the mesh
+        (mesh as any).velocity = new THREE.Vector3(0, 0, 0);
+        (mesh as any).force = new THREE.Vector3(0, 0, 0);
+        (mesh as any).mass = 1;
+        
+        this.nodes.set(title, mesh);
+        this.scene.add(mesh);
+        
+        // Create and add label
+        const label = this.createTextSprite(title, {
+            fontsize: 16,
+            textColor: { r: 255, g: 255, b: 255, a: 1.0 },
+            backgroundColor: { r: 0, g: 0, b: 0, a: 0.7 }
+        });
+        
+        this.labels.set(title, label);
+        this.scene.add(label);
+        
+        // Initialize color pulse data
+        this.colorPulseData.set(title, {
+            phase: Math.random() * Math.PI * 2, // Random starting phase
+            speed: 0.5 + Math.random() * 1.5,   // Random speed between 0.5 and 2.0
+            baseColor: new THREE.Color(0xffffff), // White
+            pulseColor: new THREE.Color(0x00ffff) // Yellow
+        });
+        
+    }
+
+    addLink(from: string, to: string): void {
+        const fromMesh = this.nodes.get(from);
+        const toMesh = this.nodes.get(to);
+        if (!fromMesh || !toMesh) return;
+
+        const geometry = new THREE.BufferGeometry().setFromPoints([
+            fromMesh.position.clone(),
+            toMesh.position.clone()
+        ]);
+
+        const material = new THREE.LineBasicMaterial({
+            color: 0x444444,
+            transparent: true,
+            opacity: 0.4,          
+            depthWrite: false,
+            depthTest: true,        // Ensure proper rendering
+        });
+
+        const line = new THREE.Line(geometry, material);
+
+        // Force render even if camera is close by reducing frustum clipping issues
+        line.frustumCulled = false;
+
+        this.links.push({ from: fromMesh, to: toMesh, line: line });
+        this.scene.add(line);
+        
+        // Update node scales since connection counts changed
+        this.updateNodeScales();
+    }
+
+    initializePositions(): void {
+        const spread = 8; // Smaller spread for Obsidian notes
+        for (const [title, mesh] of this.nodes) {
+            const x = (Math.random() - 0.5) * spread;
+            const z = (Math.random() - 0.5) * spread;
+            const y = (Math.random() - 0.5) * spread * 0.3;
+            mesh.position.set(x, y, z);
+        }
+    }
+
+    calculateForces(): void {
+        // Reset forces
+        for (const [title, node] of this.nodes) {
+            ((node as any).force as THREE.Vector3).set(0, 0, 0);
+        }
+
+        // Repulsion between all nodes
+        const nodeArray = Array.from(this.nodes.values());
+        for (let i = 0; i < nodeArray.length; i++) {
+            for (let j = i + 1; j < nodeArray.length; j++) {
+                const nodeA = nodeArray[i];
+                const nodeB = nodeArray[j];
+                
+                const distance = nodeA.position.distanceTo(nodeB.position);
+                if (distance < 0.1) continue;
+                
+                const repulsionForce = this.forces.repulsion / (distance * distance);
+                const direction = new THREE.Vector3()
+                    .subVectors(nodeA.position, nodeB.position)
+                    .normalize()
+                    .multiplyScalar(repulsionForce);
+                
+                ((nodeA as any).force as THREE.Vector3).add(direction);
+                ((nodeB as any).force as THREE.Vector3).sub(direction);
+            }
+        }
+
+        // Attraction along links
+        for (const link of this.links) {
+            const distance = link.from.position.distanceTo(link.to.position);
+            const idealDistance = 2.5; // Ideal distance for Obsidian notes
+            
+            const springForce = (distance - idealDistance) * this.forces.linkStrength;
+            const direction = new THREE.Vector3()
+                .subVectors(link.to.position, link.from.position)
+                .normalize()
+                .multiplyScalar(springForce);
+            
+            ((link.from as any).force as THREE.Vector3).add(direction);
+            ((link.to as any).force as THREE.Vector3).sub(direction);
+        }
+
+        // Center attraction
+        for (const [title, node] of this.nodes) {
+            const centerForce = new THREE.Vector3()
+                .copy(node.position)
+                .multiplyScalar(-this.forces.centerAttraction);
+            ((node as any).force as THREE.Vector3).add(centerForce);
+        }
+    }
+
+    updatePositions(): void {
+        for (const [title, node] of this.nodes) {
+            const velocity = (node as any).velocity as THREE.Vector3;
+            const force = (node as any).force as THREE.Vector3;
+
+            velocity.add(force);
+            velocity.multiplyScalar(this.forces.damping);
+
+            // Clamp tiny movements
+            if (velocity.lengthSq() < this.velocityTreshold * this.velocityTreshold) {
+                velocity.set(0, 0, 0);
+            }
+
+            node.position.add(velocity);
+        }
+
+        // Update link lines
+        for (const link of this.links) {
+            const points = [link.from.position, link.to.position];
+            link.line.geometry.setFromPoints(points);
+        }
+    }
+
+    updateLabels(camera?: THREE.Camera): void {
+        for (const [title, node] of this.nodes) {
+            const label = this.labels.get(title);
+            if (label) {
+                // Calculate connection count for this node
+                const connectionCount = this.links.filter(link => 
+                    link.from === node || link.to === node
+                ).length;
+                
+                // Calculate node scale based on connections
+                //const nodeScale = 0.3 + (connectionCount * 0.08); Try to use directly node scale property
+                
+                // Position label above the node with better offset for small nodes
+                label.position.copy(node.position);
+                label.position.y += node.scale.x * 0.6 + 0.3; // Reduced multiplier and base offset
+                
+                // Distance-based visibility
+                if (camera) {
+                    const distanceToCamera = camera.position.distanceTo(node.position);
+                    
+                    if (distanceToCamera <= this.maxVisibleDistance) {
+                        label.visible = true;
+                        // Optional: Fade labels based on distance
+                        const fadeStart = this.maxVisibleDistance * 0.6;
+                        if (distanceToCamera > fadeStart) {
+                            const fadeAmount = 1 - (distanceToCamera - fadeStart) / (this.maxVisibleDistance - fadeStart);
+                            label.material.opacity = fadeAmount;
+                        } else {
+                            label.material.opacity = 1;
+                        }
+                    } else {
+                        label.visible = false;
+                    }
+                } else {
+                    // If no camera provided, keep labels visible
+                    label.visible = true;
+                    label.material.opacity = 1;
+                }
+            }
+        }
+    }
+
+    updateColors(): void {
+        const time = Date.now() * 0.001; // Convert to seconds
+        
+        for (const [title, node] of this.nodes) {
+            const pulseData = this.colorPulseData.get(title);
+            if (!pulseData) continue;
+            
+            // Update phase
+            pulseData.phase += pulseData.speed * 0.016; // Assuming ~60fps
+            
+            // Calculate pulse factor (0 to 1)
+            const pulseFactor = (Math.sin(pulseData.phase) + 1) * 0.5;
+            
+            // Interpolate between base color (red) and pulse color (white)
+            const currentColor = new THREE.Color();
+            currentColor.lerpColors(pulseData.baseColor, pulseData.pulseColor, pulseFactor);
+            
+            // Apply color to node material and emissive
+            if (node instanceof THREE.Mesh && node.material) {
+                if (Array.isArray(node.material)) {
+                    node.material.forEach(mat => {
+                        if ('color' in mat) {
+                            (mat as any).color.copy(currentColor);
+                        }
+                    });
+                } else if ('color' in node.material) {
+                    (node.material as any).color.copy(currentColor);
+                    (node.material as any).emissive.copy(currentColor);
+                }
+            }
+        }
+    }
+
+    setParticleSpawnRate(milliseconds: number): void {
+        if (this.particleSystem) {
+            this.particleSystem.setSpawnRate(milliseconds);
+        }
+    }
+
+    setMaxParticles(maxParticles: number): void{
+        if (this.particleSystem) {
+            this.particleSystem.setMaxParticles(maxParticles);
+        }
+    }
+
+    updateParticles(deltaTime: number): void {
+        if (this.particleSystem) {
+            // Convert links to the format expected by particle system
+            const linkData = this.links.map(link => ({
+                from: link.from,
+                to: link.to
+            }));
+            this.particleSystem.update(deltaTime, linkData);
+        }
+    }
+
+    animate = (camera?: THREE.Camera): void => {
+        if (!this.isRunning) return;
+
+        this.calculateForces();
+        this.updatePositions();
+        this.updateLabels(camera);
+        this.updateColors();
+
+        this.animationId = requestAnimationFrame(() => this.animate(camera));
+    }
+
+    start(camera?: THREE.Camera): void {
+        this.isRunning = true;
+        this.animate(camera);
+    }
+
+    stop(): void {
+        this.isRunning = false;
+        if (this.animationId !== null) {
+            cancelAnimationFrame(this.animationId);
+        }
+    }
+
+    setForceStrength(type: keyof typeof this.forces, value: number): void {
+        this.forces[type] = value;
+    }
+
+    // Utility methods for label management
+    updateLabelText(nodeTitle: string, newText: string): void {
+        const label = this.labels.get(nodeTitle);
+        if (label) {
+            this.scene.remove(label);
+            const newLabel = this.createTextSprite(newText);
+            this.labels.set(nodeTitle, newLabel);
+            this.scene.add(newLabel);
+        };
+    };
+
+    setLabelVisibility(visible: boolean): void{
+        for (const [title, label] of this.labels) {
+            label.visible = visible
+        }
+    };
+
+    removeLabelForNode(nodeTitle: string): void {
+        const label = this.labels.get(nodeTitle);
+        if (label) {
+            this.scene.remove(label);
+            this.labels.delete(nodeTitle);
+        }
+    }
+
+    // Node scaling management - now handles connection counting internally
+    updateNodeScales(): void {
+        // Count connections for each node
+        const nodeConnectionCounts = new Map<string, number>();
+        
+        for (const link of this.links) {
+            // Find node titles by reverse lookup
+            let fromTitle = '';
+            let toTitle = '';
+            
+            for (const [title, node] of this.nodes) {
+                if (node === link.from) fromTitle = title;
+                if (node === link.to) toTitle = title;
+            }
+            
+            if (fromTitle && toTitle) {
+                nodeConnectionCounts.set(fromTitle, (nodeConnectionCounts.get(fromTitle) || 0) + 1);
+                nodeConnectionCounts.set(toTitle, (nodeConnectionCounts.get(toTitle) || 0) + 1);
+            }
+        }
+        
+        // Apply scaling to all nodes
+        for (const [title, node] of this.nodes) {
+            const connectionCount = nodeConnectionCounts.get(title) || 0;
+            const scale = this.baseNodeScale + (connectionCount * 0.08);
+            node.scale.set(scale, scale, scale);
+        }
+    }
+
+    getNodeConnectionCount(nodeTitle: string): number {
+        return this.links.filter(link => {
+            const fromTitle = this.getNodeTitle(link.from);
+            const toTitle = this.getNodeTitle(link.to);
+            return fromTitle === nodeTitle || toTitle === nodeTitle;
+        }).length;
+    }
+
+    private getNodeTitle(node: THREE.Object3D): string {
+        for (const [title, nodeObj] of this.nodes) {
+            if (nodeObj === node) return title;
+        }
+        return '';
+    }
+}
+
+class LinkParticleSystem {
+    scene: THREE.Scene;
+    particles: Array<{
+        mesh: THREE.Mesh;
+        link: {from: THREE.Object3D, to: THREE.Object3D};
+        progress: number;
+        speed: number;
+        direction: number; // 1 for forward, -1 for reverse
+    }>;
+    particlePool: THREE.Mesh[];
+    maxParticles: number;
+    spawnRate: number;
+    lastSpawn: number;
+
+    constructor(scene: THREE.Scene, maxParticles: number = 50) {
+        this.scene = scene;
+        this.particles = [];
+        this.particlePool = [];
+        this.maxParticles = maxParticles;
+        this.spawnRate = 1000; // milliseconds between spawns
+        this.lastSpawn = 0;
+        
+        this.initializeParticlePool();
+    }
+
+    private initializeParticlePool(): void {
+        // Pre-create particle meshes for performance
+        for (let i = 0; i < this.maxParticles; i++) {
+            const geometry = new THREE.SphereGeometry(0.1, 8, 8);
+            const material = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            const particle = new THREE.Mesh(geometry, material);
+            particle.visible = false;
+            this.scene.add(particle);
+            this.particlePool.push(particle);
+        }
+    }
+
+    spawnParticle(link: {from: THREE.Object3D, to: THREE.Object3D}): void {
+        if (this.particles.length >= this.maxParticles) return;
+
+        // Get available particle from pool
+        const availableParticle = this.particlePool.find(p => !p.visible);
+        if (!availableParticle) return;
+
+        // Random direction (forward or reverse)
+        //const direction = Math.random() > 0.5 ? 1 : -1;
+		const direction = 1 //No reverse
+        const startProgress = direction === 1 ? 0 : 1;
+
+        // Create particle data
+        const particle = {
+            mesh: availableParticle,
+            link: link,
+            progress: startProgress,
+            speed: 0.3 + Math.random() * 0.4, // Random speed between 0.3-0.7
+            direction: direction
+        };
+
+        // Position particle at start
+        this.updateParticlePosition(particle);
+        availableParticle.visible = true;
+
+		
+        /* Add random color variation
+        (availableParticle.material as THREE.MeshBasicMaterial).color.setHSL(
+            Math.random(), 
+            0.5 + Math.random() * 0.5, 
+            0.4 + Math.random() * 0.4
+        );
+		*/
+
+        this.particles.push(particle);
+    }
+
+    private updateParticlePosition(particle: any): void {
+        const { link, progress } = particle;
+        
+        // Interpolate position along the link
+        const startPos = particle.direction === 1 ? link.from.position : link.to.position;
+        const endPos = particle.direction === 1 ? link.to.position : link.from.position;
+        
+        particle.mesh.position.lerpVectors(startPos, endPos, progress);
+    }
+
+    update(deltaTime: number, links: Array<{from: THREE.Object3D, to: THREE.Object3D}>): void {
+        const currentTime = performance.now();
+
+        // Spawn new particle in a random link
+        if (currentTime - this.lastSpawn > this.spawnRate && links.length > 0) {
+            const randomLink = links[Math.floor(Math.random() * links.length)];
+            this.spawnParticle(randomLink);
+            this.lastSpawn = currentTime;
+        }
+
+		/* Spawn new particles in all links at the same time.
+		if (currentTime - this.lastSpawn > this.spawnRate && links.length > 0) {
+			for (const link of links) {
+				this.spawnParticle(link);
+			}
+			this.lastSpawn = currentTime;
+		}
+		*/
+
+        // Update existing particles
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const particle = this.particles[i];
+            
+            // Update progress
+            particle.progress += particle.speed * deltaTime * particle.direction;
+
+            // Check if particle reached the end
+            if ((particle.direction === 1 && particle.progress >= 1) || 
+                (particle.direction === -1 && particle.progress <= 0)) {
+                
+                // Remove particle
+                particle.mesh.visible = false;
+                this.particles.splice(i, 1);
+                continue;
+            }
+
+            // Update position
+            this.updateParticlePosition(particle);
+
+            // Add some pulsing effect
+            const pulse = 1 + 0.3 * Math.sin(currentTime * 0.005 + i);
+            particle.mesh.scale.setScalar(pulse);
+        }
+    }
+
+    // Method to adjust spawn rate
+    setSpawnRate(milliseconds: number): void {
+        this.spawnRate = milliseconds;
+    }
+
+	setMaxParticles(maxParticles: number): void{
+		this.maxParticles = maxParticles;
+	}
+
+    // Method to clear all particles
+    clearParticles(): void {
+        for (const particle of this.particles) {
+            particle.mesh.visible = false;
+        }
+        this.particles = [];
+    }
+
+    // Cleanup method
+    dispose(): void {
+        this.clearParticles();
+        for (const mesh of this.particlePool) {
+            this.scene.remove(mesh);
+            mesh.geometry.dispose();
+            (mesh.material as THREE.Material).dispose();
+        }
+        this.particlePool = [];
+    }
 }
