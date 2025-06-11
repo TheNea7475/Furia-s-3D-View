@@ -26,6 +26,7 @@ interface PluginSettings {
     bloomStrength: number;
     bloomRadius: number;
     bloomThreshold: number;
+    linkScaleMultiplier: number;
 }
 
 const DEFAULT_SETTINGS: PluginSettings = {
@@ -41,6 +42,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
     bloomStrength: 2,
     bloomRadius: 0.1,
     bloomThreshold: 0.9,
+    linkScaleMultiplier: 0.1
 }
 
 
@@ -117,6 +119,7 @@ export default class MyPlugin extends Plugin {
 
             // Update nodes dimensions and trigger the rescaling of nodes
             this.graphView.gravityGraph.baseNodeScale = this.settings.baseNodeScale;
+            this.graphView.gravityGraph.linkScaleMultiplier = this.settings.linkScaleMultiplier;
             this.graphView.gravityGraph.updateNodeScales();
 
             //Update bloom settings, if composer ready
@@ -245,8 +248,8 @@ class SettingsTab extends PluginSettingTab {
 			.setName('Center attraction')
 			.setDesc('Controls how strongly nodes are pulled to center')
 			.addSlider(slider => slider
-				.setLimits(0, 0.1, 0.001)
-				.setValue(this.plugin.settings.forces?.centerAttraction ?? 0.001)
+				.setLimits(1, 100, 1)
+				.setValue(this.plugin.settings.forces?.centerAttraction*10000)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
 					if (!this.plugin.settings.forces) {
@@ -258,7 +261,7 @@ class SettingsTab extends PluginSettingTab {
 							linkStrength: 0.03
 						};
 					}
-					this.plugin.settings.forces.centerAttraction = value;
+					this.plugin.settings.forces.centerAttraction = value/10000;
 					await this.plugin.saveSettings();
 					this.plugin.updateSettingsParameters();
 				}));
@@ -343,8 +346,24 @@ class SettingsTab extends PluginSettingTab {
 					this.plugin.updateSettingsParameters();
 				}));
 
+            // linkScaleMultiplier
+            new Setting(containerEl)
+			.setName('Link count scale multiplier')
+			.setDesc("How much a node grows for each link it has")
+			.addSlider(slider => slider
+				.setLimits(0.1, 2, 0.1)
+				.setValue(this.plugin.settings.linkScaleMultiplier ?? 0.1)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.linkScaleMultiplier) {
+						this.plugin.settings.linkScaleMultiplier = 0.1
+					}
+					this.plugin.settings.linkScaleMultiplier = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
 
-            // Bloom settings
+            // Bloom settings header
             new Setting(containerEl).setName('Bloom').setHeading().setDesc("Pretty resource intensive");
 
             // Bloom strenght
@@ -948,6 +967,7 @@ class GravityGraph {
     velocityTreshold: number = 0.001; //0 to deactivate
     maxVisibleDistance: number = 8;
     baseNodeScale: number = 1;
+    linkScaleMultiplier: number = 0.1;
     
     // Color pulsing properties
     colorPulseData: Map<string, {
@@ -974,6 +994,8 @@ class GravityGraph {
         this.particleSystem = new LinkParticleSystem(scene);
         this.colorPulseData = new Map();
     }
+
+    // Utility methods for label management
 
     createTextSprite(text: string, parameters: any = {}): THREE.Sprite {
         const fontsize = parameters.fontsize || 18;
@@ -1019,6 +1041,74 @@ class GravityGraph {
         sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
         
         return sprite;
+    }
+
+    updateLabelText(nodeTitle: string, newText: string): void {
+        const label = this.labels.get(nodeTitle);
+        if (label) {
+            this.scene.remove(label);
+            const newLabel = this.createTextSprite(newText);
+            this.labels.set(nodeTitle, newLabel);
+            this.scene.add(newLabel);
+        };
+    };
+
+    setLabelVisibility(visible: boolean): void{
+        for (const [title, label] of this.labels) {
+            label.visible = visible
+        }
+    };
+
+    removeLabelForNode(nodeTitle: string): void {
+        const label = this.labels.get(nodeTitle);
+        if (label) {
+            this.scene.remove(label);
+            this.labels.delete(nodeTitle);
+        }
+    }
+
+    updateLabels(camera?: THREE.Camera): void {
+        for (const [title, node] of this.nodes) {
+            const label = this.labels.get(title);
+            if (label) {
+
+                // Position label above the node with better offset for small nodes
+                label.position.copy(node.position);
+                label.position.y += node.scale.x * 0.6 + 0.3; // Reduced multiplier and base offset
+
+                // Distance-based visibility and scaling
+                if (camera) {
+                    const distanceToCamera = camera.position.distanceTo(node.position);
+
+                    if (distanceToCamera <= this.maxVisibleDistance) {
+                        label.visible = true;
+
+                        // Scale label to maintain perceived size
+                        const scaleFactor = distanceToCamera * 1; // this ScaleFactor needs adjustment
+                        // Need to get default proportions to compute everything correctly and the scale doesnt grow uncontrollably due to being called every frame
+                        const defScale = label.scale
+                        const xtoy = defScale.x/defScale.y
+                        const xtoz = defScale.z/defScale.x
+                        label.scale.set(scaleFactor, scaleFactor / xtoy, scaleFactor / xtoz);
+
+                        //Fade labels based on distance
+                        const fadeStart = this.maxVisibleDistance * 0.6;
+                        if (distanceToCamera > fadeStart) {
+                            const fadeAmount = 1 - (distanceToCamera - fadeStart) / (this.maxVisibleDistance - fadeStart);
+                            label.material.opacity = fadeAmount;
+                        } else {
+                            label.material.opacity = 1;
+                        }
+                    } else {
+                        label.visible = false;
+                    }
+                } else {
+                    // If no camera provided, keep labels visible and at default scale/opacity
+                    label.visible = true;
+                    label.material.opacity = 1;
+                }
+            }
+        }
     }
 
     // Updated addNode method that creates the mesh internally
@@ -1175,48 +1265,6 @@ class GravityGraph {
         }
     }
 
-    updateLabels(camera?: THREE.Camera): void {
-        for (const [title, node] of this.nodes) {
-            const label = this.labels.get(title);
-            if (label) {
-                // Calculate connection count for this node
-                const connectionCount = this.links.filter(link => 
-                    link.from === node || link.to === node
-                ).length;
-                
-                // Calculate node scale based on connections
-                //const nodeScale = 0.3 + (connectionCount * 0.08); Try to use directly node scale property
-                
-                // Position label above the node with better offset for small nodes
-                label.position.copy(node.position);
-                label.position.y += node.scale.x * 0.6 + 0.3; // Reduced multiplier and base offset
-                
-                // Distance-based visibility
-                if (camera) {
-                    const distanceToCamera = camera.position.distanceTo(node.position);
-                    
-                    if (distanceToCamera <= this.maxVisibleDistance) {
-                        label.visible = true;
-                        // Optional: Fade labels based on distance
-                        const fadeStart = this.maxVisibleDistance * 0.6;
-                        if (distanceToCamera > fadeStart) {
-                            const fadeAmount = 1 - (distanceToCamera - fadeStart) / (this.maxVisibleDistance - fadeStart);
-                            label.material.opacity = fadeAmount;
-                        } else {
-                            label.material.opacity = 1;
-                        }
-                    } else {
-                        label.visible = false;
-                    }
-                } else {
-                    // If no camera provided, keep labels visible
-                    label.visible = true;
-                    label.material.opacity = 1;
-                }
-            }
-        }
-    }
-
     updateColors(): void {
         const time = Date.now() * 0.001; // Convert to seconds
         
@@ -1300,31 +1348,6 @@ class GravityGraph {
         this.forces[type] = value;
     }
 
-    // Utility methods for label management
-    updateLabelText(nodeTitle: string, newText: string): void {
-        const label = this.labels.get(nodeTitle);
-        if (label) {
-            this.scene.remove(label);
-            const newLabel = this.createTextSprite(newText);
-            this.labels.set(nodeTitle, newLabel);
-            this.scene.add(newLabel);
-        };
-    };
-
-    setLabelVisibility(visible: boolean): void{
-        for (const [title, label] of this.labels) {
-            label.visible = visible
-        }
-    };
-
-    removeLabelForNode(nodeTitle: string): void {
-        const label = this.labels.get(nodeTitle);
-        if (label) {
-            this.scene.remove(label);
-            this.labels.delete(nodeTitle);
-        }
-    }
-
     // Node scaling management - now handles connection counting internally
     updateNodeScales(): void {
         // Count connections for each node
@@ -1349,7 +1372,7 @@ class GravityGraph {
         // Apply scaling to all nodes
         for (const [title, node] of this.nodes) {
             const connectionCount = nodeConnectionCounts.get(title) || 0;
-            const scale = this.baseNodeScale + (connectionCount * 0.08);
+            const scale = this.baseNodeScale + (connectionCount * this.linkScaleMultiplier);
             node.scale.set(scale, scale, scale);
         }
     }
