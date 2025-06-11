@@ -2,7 +2,7 @@
 
 ![image](https://github.com/user-attachments/assets/55f432bf-abbb-4554-8816-ef14527a85ca)
 
-https://github.com/user-attachments/assets/26e336e5-08aa-43b2-9b64-b1bc57a6acaf
+https://github.com/user-attachments/assets/a2cd9629-0bc4-4e2c-8865-37a8bf78a720
 
 A stellar-like 3D Graph for Obsidian. Bring your notes to life with an interactive, immersive 3D graph view! This plugin transforms your Obsidian vault into a dynamic universe, where each note becomes a star and links form the constellations connecting your knowledge.
 
