@@ -21,7 +21,8 @@ interface PluginSettings {
         centerAttraction: number;
         linkStrength: number;
     };
-    maxVisibleDistance: number
+    maxVisibleDistance: number;
+    labelScale: number;
     baseNodeScale: number
     bloomStrength: number;
     bloomRadius: number;
@@ -38,6 +39,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
         linkStrength: 0.03
     },
     maxVisibleDistance: 15,
+    labelScale: 0.05,
     baseNodeScale: 1,
     bloomStrength: 2,
     bloomRadius: 0.1,
@@ -117,9 +119,10 @@ export default class MyPlugin extends Plugin {
 		    // Update labels max distance in the GraphView's GravityGraph if it exists
 			this.graphView.gravityGraph.maxVisibleDistance = this.settings.maxVisibleDistance;
 
-            // Update nodes dimensions and trigger the rescaling of nodes
+            // Update nodes and labels dimensions and trigger the rescaling of nodes
             this.graphView.gravityGraph.baseNodeScale = this.settings.baseNodeScale;
             this.graphView.gravityGraph.linkScaleMultiplier = this.settings.linkScaleMultiplier;
+            this.graphView.gravityGraph.labelScale = this.settings.labelScale;
             this.graphView.gravityGraph.updateNodeScales();
 
             //Update bloom settings, if composer ready
@@ -325,6 +328,23 @@ class SettingsTab extends PluginSettingTab {
 						this.plugin.settings.maxVisibleDistance = 8
 					}
 					this.plugin.settings.maxVisibleDistance = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+        // Label scaling
+		new Setting(containerEl)
+			.setName('Label dimension')
+			.setDesc('Controls how big are labels above nodes')
+			.addSlider(slider => slider
+				.setLimits(1, 10, 1)
+				.setValue(this.plugin.settings.labelScale*100)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.labelScale) {
+						this.plugin.settings.labelScale = 0.05
+					}
+					this.plugin.settings.labelScale = value/100;
 					await this.plugin.saveSettings();
 					this.plugin.updateSettingsParameters();
 				}));
@@ -966,6 +986,7 @@ class GravityGraph {
     particleSystem: LinkParticleSystem;
     velocityTreshold: number = 0.001; //0 to deactivate
     maxVisibleDistance: number = 8;
+    labelScale: number = 0.05;
     baseNodeScale: number = 1;
     linkScaleMultiplier: number = 0.1;
     
@@ -1084,7 +1105,7 @@ class GravityGraph {
                         label.visible = true;
 
                         // Scale label to maintain perceived size
-                        const scaleFactor = distanceToCamera * 1; // this ScaleFactor needs adjustment
+                        const scaleFactor = distanceToCamera * this.labelScale;
                         // Need to get default proportions to compute everything correctly and the scale doesnt grow uncontrollably due to being called every frame
                         const defScale = label.scale
                         const xtoy = defScale.x/defScale.y
