@@ -271,8 +271,8 @@ class SettingsTab extends PluginSettingTab {
 			.setName('Link strength')
 			.setDesc('Controls how strongly connected nodes attract each other')
 			.addSlider(slider => slider
-				.setLimits(0.1, 0.1, 0.001)
-				.setValue(this.plugin.settings.forces?.linkStrength ?? 0.03)
+				.setLimits(1, 10, 1)
+				.setValue(this.plugin.settings.forces?.linkStrength*100)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
 					if (!this.plugin.settings.forces) {
@@ -284,7 +284,7 @@ class SettingsTab extends PluginSettingTab {
 							linkStrength: 0.03
 						};
 					}
-					this.plugin.settings.forces.linkStrength = value;
+					this.plugin.settings.forces.linkStrength = value/100;
 					await this.plugin.saveSettings();
 					this.plugin.updateSettingsParameters();
 				}));
