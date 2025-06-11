@@ -351,14 +351,14 @@ class SettingsTab extends PluginSettingTab {
 			.setName('Link count scale multiplier')
 			.setDesc("How much a node grows for each link it has")
 			.addSlider(slider => slider
-				.setLimits(0.1, 2, 0.1)
-				.setValue(this.plugin.settings.linkScaleMultiplier ?? 0.1)
+				.setLimits(1, 200, 1)
+				.setValue(this.plugin.settings.linkScaleMultiplier*100)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
 					if (!this.plugin.settings.linkScaleMultiplier) {
 						this.plugin.settings.linkScaleMultiplier = 0.1
 					}
-					this.plugin.settings.linkScaleMultiplier = value;
+					this.plugin.settings.linkScaleMultiplier = value/100;
 					await this.plugin.saveSettings();
 					this.plugin.updateSettingsParameters();
 				}));
