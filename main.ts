@@ -338,13 +338,13 @@ class SettingsTab extends PluginSettingTab {
 			.setDesc('Controls how big are labels above nodes')
 			.addSlider(slider => slider
 				.setLimits(1, 10, 1)
-				.setValue(this.plugin.settings.labelScale*100)
+				.setValue(this.plugin.settings.labelScale*10)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
 					if (!this.plugin.settings.labelScale) {
-						this.plugin.settings.labelScale = 0.05
+						this.plugin.settings.labelScale = 0.5
 					}
-					this.plugin.settings.labelScale = value/100;
+					this.plugin.settings.labelScale = value/10;
 					await this.plugin.saveSettings();
 					this.plugin.updateSettingsParameters();
 				}));
