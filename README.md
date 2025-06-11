@@ -19,15 +19,18 @@ This plugin is in early development. That means:
 
 - Features are being added regularly
 - There may be bugs, visual glitches, or performance hiccups
-- Your feedback is highly appreciated!
-- **Donations are widely appreciated!**
-- Ask for features you would like to see added!
+- Your feedback is highly appreciated! --> Something glitches? Open an issue!
+- **Donations of any amount are widely appreciated!** --> In Obsidian, 3D party plugin, look for this one and click the hearth!
+- Ask for features you would like to see added! --> You'd really like to use a hearth shaped node instead of a sphere? Open an issue!
 
-💡 The goal is to make Obsidian not just a place to store knowledge, but a space where you can experience it — visually, spatially, and intuitively.
+💡Obsidian is not just a place to store knowledge, but a space where you can experience it — visually, spatially, and intuitively.
 
 ## Upcoming features
 
-- Nodes color based on folders, color customizable by the user.
-- Nodes bloom (emissive light) based on other properties, chosen and customized by the user.
-- Clicking a note brings you to the corresponding Note.
+- Nodes standard color based on folders paths, color customizable by the user.
+- Nodes bloom (emissive light) color based on node properties, chosen by the user.
+- Nodes color pulsing based on node properties, chosen by the user.
+- Clicking a note opens the corresponding Note.
+- Node labels scale when viewed from far.
+- Node labels use newline for longer text.
 - Performance optimization.
