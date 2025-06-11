@@ -179,7 +179,7 @@ class SettingsTab extends PluginSettingTab {
 			.setName('Gravity')
 			.setDesc('Controls downward force applied to nodes. Actually useless to change at the moment')
 			.addSlider(slider => slider
-				.setLimits(0, 0.1, 0.001)
+				.setLimits(0.01, 0.1, 0.01)
 				.setValue(this.plugin.settings.forces?.gravity ?? 0.02)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
@@ -202,7 +202,7 @@ class SettingsTab extends PluginSettingTab {
 			.setName('Repulsion')
 			.setDesc('Controls how strongly nodes repel each other')
 			.addSlider(slider => slider
-				.setLimits(0, 2, 0.01)
+				.setLimits(0.01, 2, 0.01)
 				.setValue(this.plugin.settings.forces?.repulsion ?? 0.8)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
@@ -271,7 +271,7 @@ class SettingsTab extends PluginSettingTab {
 			.setName('Link strength')
 			.setDesc('Controls how strongly connected nodes attract each other')
 			.addSlider(slider => slider
-				.setLimits(0, 0.1, 0.001)
+				.setLimits(0.1, 0.1, 0.001)
 				.setValue(this.plugin.settings.forces?.linkStrength ?? 0.03)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
