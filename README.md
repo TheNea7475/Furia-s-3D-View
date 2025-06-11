@@ -13,6 +13,15 @@ Whether you're a visual thinker, a graph enthusiast, or just want a fresh way to
 Dynamic positioning and linking based on your note structure.
 Responsive layout that scales with your vault
 
+## 💻 Performance Note
+
+Physics simulation requires to do a reasonable amount of calculations, so expect some CPU and RAM usage.
+Feel free to report in issues your specs, the vault dimension and the load on your hardware.
+
+Load on my mahcine with a 500 files test vault:
+- RAM: DDR4 / ~30MB
+- CPU: AMD Ryzen 5 1600 / ~0.2%
+
 ## 🚧 Project Status
 
 This plugin is in early development. That means:
