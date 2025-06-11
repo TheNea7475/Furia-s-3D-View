@@ -10,7 +10,7 @@ Whether you're a visual thinker, a graph enthusiast, or just want a fresh way to
 
 ## ✨ Features 3D graph view powered by WebGL and Three.js
 
-Dynamic positioning and linking based on your note structure
+Dynamic positioning and linking based on your note structure.
 Responsive layout that scales with your vault
 
 ## 🚧 Project Status
