@@ -40,6 +40,6 @@ This plugin is in early development. That means:
 - Nodes bloom (emissive light) color based on node properties, chosen by the user.
 - Nodes color pulsing based on node properties, chosen by the user.
 - Clicking a note opens the corresponding Note.
-[x] Node labels scale when viewed from far.
+- Node labels scale when viewed from far.
 - Node labels use newline for longer text.
 - Performance optimization.
