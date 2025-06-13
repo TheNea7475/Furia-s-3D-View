@@ -1,27 +1,11 @@
-/*
-
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
-
-If your plugin does not need CSS, delete this file.
-
-*/
 .graph-label {
     position: absolute;
-    background: rgba(0, 0, 0, 0.8);
-    color: white;
-    padding: 4px 8px;
+    background: var(--interactive-background);
+    color: var(--interactive-accent);
     border-radius: 4px;
     font-size: 12px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    pointer-events: none;
-    transform: translate(-50%, -100%);
-    white-space: nowrap;
-    z-index: 1000;
-    backdrop-filter: blur(4px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    transition: opacity 0.2s ease;
+    border: 1px solid var(--interactive-accent);
 }
 
 .graph-label.hidden {
