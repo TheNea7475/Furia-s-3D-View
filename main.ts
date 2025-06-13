@@ -1021,7 +1021,7 @@ class GravityGraph {
     createTextSprite(text: string, parameters: any = {}): THREE.Sprite {
         const fontsize = parameters.fontsize || 18;
         const textColor = parameters.textColor || { r: 255, g: 255, b: 255, a: 1.0 };
-        const backgroundColor = parameters.backgroundColor || { r: 0, g: 0, b: 0, a: 0.8 };
+        //const backgroundColor = parameters.backgroundColor || { r: 0, g: 0, b: 0, a: 0.8 };
         
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d')!;
@@ -1038,10 +1038,11 @@ class GravityGraph {
         context.imageSmoothingEnabled = false;
         context.font = `${fontsize * 2}px Arial`;
         
-        // Draw background
+        /* Draw background
         context.fillStyle = `rgba(${backgroundColor.r},${backgroundColor.g},${backgroundColor.b},${backgroundColor.a})`;
         context.fillRect(0, 0, canvas.width, canvas.height);
-        
+        */
+
         // Draw text
         context.fillStyle = `rgba(${textColor.r},${textColor.g},${textColor.b},${textColor.a})`;
         context.fillText(text, 8, fontsize * 1.5);
@@ -1060,7 +1061,7 @@ class GravityGraph {
         // Scale to desired size
         const scale = 0.005;
         sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
-        
+        console.log(text + "> x" + sprite.scale.x +" y" + sprite.scale.y +" z"+  sprite.scale.z)
         return sprite;
     }
 
@@ -1106,11 +1107,18 @@ class GravityGraph {
 
                         // Scale label to maintain perceived size
                         const scaleFactor = distanceToCamera * this.labelScale;
+                        console.log("Distance to camera> " + distanceToCamera )
                         // Need to get default proportions to compute everything correctly and the scale doesnt grow uncontrollably due to being called every frame
                         const defScale = label.scale
+                        console.log("Base scale: >" + defScale.x +" "+ defScale.y + " " + defScale.z)
                         const xtoy = defScale.x/defScale.y
-                        const xtoz = defScale.z/defScale.x
-                        label.scale.set(scaleFactor, scaleFactor / xtoy, scaleFactor / xtoz);
+                        const xtoz = defScale.x/defScale.z
+                        const scaleFactorY = scaleFactor / xtoy
+                        const scaleFactorZ = scaleFactor / xtoz
+                        // Replaced scalefactor z with 1, idk it works lmao
+                        label.scale.set(scaleFactor, scaleFactorY, 1);
+                        console.log("Label update: "+ title + "> x"+scaleFactor + " y" + scaleFactor + " z" + scaleFactorZ)
+
 
                         //Fade labels based on distance
                         const fadeStart = this.maxVisibleDistance * 0.6;
