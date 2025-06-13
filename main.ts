@@ -123,7 +123,6 @@ export default class MyPlugin extends Plugin {
             this.graphView.gravityGraph.baseNodeScale = this.settings.baseNodeScale;
             this.graphView.gravityGraph.linkScaleMultiplier = this.settings.linkScaleMultiplier;
             this.graphView.gravityGraph.labelScale = this.settings.labelScale;
-            this.graphView.gravityGraph.updateNodeScales();
 
             //Update bloom settings, if composer ready
             if (this.graphView.bloomPass) {
@@ -438,7 +437,6 @@ class SettingsTab extends PluginSettingTab {
                 }));
 
 
-
 	}
 }
 
@@ -503,7 +501,6 @@ class GraphView extends ItemView {
 		canvas.style.display = "block";
 		canvas.style.margin = "0";
 		container.appendChild(canvas);
-
 
         const labelContainer = document.createElement('div');
         labelContainer.style.position = 'absolute';
@@ -1072,74 +1069,12 @@ class GravityGraph {
         }
     }
 
-updateLabels(camera?: THREE.Camera): void {
-    if (!camera) return;
-    
-    const visibleLabels = new Set<string>();
-    
-    for (const [title, node] of this.nodes) {
-        // Calculate distance and visibility first
-        const distanceToCamera = camera.position.distanceTo(node.position);
-        const nodePosition = node.position.clone();
-        nodePosition.y += node.scale.x * 0.6 + 0.3;
-        const screenPosition = nodePosition.clone().project(camera);
-        
-        const shouldBeVisible = distanceToCamera <= this.maxVisibleDistance && screenPosition.z < 1;
-        
-        if (shouldBeVisible) {
-            visibleLabels.add(title);
-            
-            // Create label if it doesn't exist
-            if (!this.labels.has(title)) {
-                const label = this.createLabel(title);
-                this.labels.set(title, label);
-            }
-            
-            const label = this.labels.get(title)!;
-            
-            // Project to screen coordinates
-            const canvas = this.labelContainer.parentElement;
-            if (!canvas) continue;
-            
-            const rect = canvas.getBoundingClientRect();
-            const x = (screenPosition.x * 0.5 + 0.5) * rect.width;
-            const y = (-screenPosition.y * 0.5 + 0.5) * rect.height;
-
-            // Position and scale the label
-            label.style.left = `${x}px`;
-            label.style.top = `${y}px`;
-            
-            const scale = Math.max(0.5, Math.min(2, this.labelScale / (distanceToCamera * 0.1)));
-            label.style.transform = `translate(-50%, -100%) scale(${scale})`;
-            
-            // Fade based on distance
-            const fadeStart = this.maxVisibleDistance * 0.6;
-            if (distanceToCamera > fadeStart) {
-                const fadeAmount = 1 - (distanceToCamera - fadeStart) / (this.maxVisibleDistance - fadeStart);
-                label.style.opacity = fadeAmount.toString();
-            } else {
-                label.style.opacity = '1';
-            }
-            
-            label.classList.remove('hidden');
-        }
-    }
-    
-    // Remove labels that are no longer visible
-    for (const [title, label] of this.labels) {
-        if (!visibleLabels.has(title)) {
-            this.labelContainer.removeChild(label);
-            this.labels.delete(title);
-        }
-    }
-}
-
     // Updated addNode method that creates the mesh internally
     addNode(title: string): void {
         // Create the node mesh
         const geometry = new THREE.SphereGeometry(0.3, 16, 16);
         const material = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
+            color: 0xffffff, //make customizable
         	emissive: 0xffffff,
 	        emissiveIntensity: 0.5,
         });
@@ -1190,8 +1125,6 @@ updateLabels(camera?: THREE.Camera): void {
         this.links.push({ from: fromMesh, to: toMesh, line: line });
         this.scene.add(line);
         
-        // Update node scales since connection counts changed
-        this.updateNodeScales();
     }
 
     initializePositions(): void {
@@ -1255,62 +1188,6 @@ updateLabels(camera?: THREE.Camera): void {
         }
     }
 
-    updatePositions(): void {
-        for (const [title, node] of this.nodes) {
-            const velocity = (node as any).velocity as THREE.Vector3;
-            const force = (node as any).force as THREE.Vector3;
-
-            velocity.add(force);
-            velocity.multiplyScalar(this.forces.damping);
-
-            // Clamp tiny movements
-            if (velocity.lengthSq() < this.velocityTreshold * this.velocityTreshold) {
-                velocity.set(0, 0, 0);
-            }
-
-            node.position.add(velocity);
-        }
-
-        // Update link lines
-        for (const link of this.links) {
-            const points = [link.from.position, link.to.position];
-            link.line.geometry.setFromPoints(points);
-        }
-    }
-
-    updateColors(): void {
-        const time = Date.now() * 0.001; // Convert to seconds
-        
-        for (const [title, node] of this.nodes) {
-            const pulseData = this.colorPulseData.get(title);
-            if (!pulseData) continue;
-            
-            // Update phase
-            pulseData.phase += pulseData.speed * 0.016; // Assuming ~60fps
-            
-            // Calculate pulse factor (0 to 1)
-            const pulseFactor = (Math.sin(pulseData.phase) + 1) * 0.5;
-            
-            // Interpolate between base color (red) and pulse color (white)
-            const currentColor = new THREE.Color();
-            currentColor.lerpColors(pulseData.baseColor, pulseData.pulseColor, pulseFactor);
-            
-            // Apply color to node material and emissive
-            if (node instanceof THREE.Mesh && node.material) {
-                if (Array.isArray(node.material)) {
-                    node.material.forEach(mat => {
-                        if ('color' in mat) {
-                            (mat as any).color.copy(currentColor);
-                        }
-                    });
-                } else if ('color' in node.material) {
-                    (node.material as any).color.copy(currentColor);
-                    (node.material as any).emissive.copy(currentColor);
-                }
-            }
-        }
-    }
-
     setParticleSpawnRate(milliseconds: number): void {
         if (this.particleSystem) {
             this.particleSystem.setSpawnRate(milliseconds);
@@ -1334,13 +1211,149 @@ updateLabels(camera?: THREE.Camera): void {
         }
     }
 
+    // NEW: Optimized single-loop update method that combines all node operations
+    updateAllNodes(camera?: THREE.Camera): void {
+        // Pre-calculate connection counts for scaling
+        const nodeConnectionCounts = new Map<string, number>();
+        for (const link of this.links) {
+            // Find node titles by reverse lookup
+            let fromTitle = '';
+            let toTitle = '';
+            
+            for (const [title, node] of this.nodes) {
+                if (node === link.from) fromTitle = title;
+                if (node === link.to) toTitle = title;
+            }
+            
+            if (fromTitle && toTitle) {
+                nodeConnectionCounts.set(fromTitle, (nodeConnectionCounts.get(fromTitle) || 0) + 1);
+                nodeConnectionCounts.set(toTitle, (nodeConnectionCounts.get(toTitle) || 0) + 1);
+            }
+        }
+
+        // Prepare for label visibility tracking
+        const visibleLabels = new Set<string>();
+        const canvas = camera ? this.labelContainer.parentElement : null;
+        const rect = canvas ? canvas.getBoundingClientRect() : null;
+
+        // SINGLE LOOP: Process all node updates in one iteration
+        for (const [title, node] of this.nodes) {
+            // 1. UPDATE POSITIONS (from updatePositions logic)
+            const velocity = (node as any).velocity as THREE.Vector3;
+            const force = (node as any).force as THREE.Vector3;
+
+            velocity.add(force);
+            velocity.multiplyScalar(this.forces.damping);
+
+            // Clamp tiny movements
+            if (velocity.lengthSq() < this.velocityTreshold * this.velocityTreshold) {
+                velocity.set(0, 0, 0);
+            }
+
+            node.position.add(velocity);
+
+            // 2. UPDATE COLORS (from updateColors logic)
+            const pulseData = this.colorPulseData.get(title);
+            if (pulseData) {
+                // Update phase
+                pulseData.phase += pulseData.speed * 0.016; // Assuming ~60fps
+                
+                // Calculate pulse factor (0 to 1)
+                const pulseFactor = (Math.sin(pulseData.phase) + 1) * 0.5;
+                
+                // Interpolate between base color and pulse color
+                const currentColor = new THREE.Color();
+                currentColor.lerpColors(pulseData.baseColor, pulseData.pulseColor, pulseFactor);
+                
+                // Apply color to node material and emissive
+                if (node instanceof THREE.Mesh && node.material) {
+                    if (Array.isArray(node.material)) {
+                        node.material.forEach(mat => {
+                            if ('color' in mat) {
+                                (mat as any).color.copy(currentColor);
+                            }
+                        });
+                    } else if ('color' in node.material) {
+                        (node.material as any).color.copy(currentColor);
+                        (node.material as any).emissive.copy(currentColor);
+                    }
+                }
+            }
+
+            // 3. UPDATE NODE SCALES (from updateNodeScales logic)
+            const connectionCount = nodeConnectionCounts.get(title) || 0;
+            const scale = this.baseNodeScale + (connectionCount * this.linkScaleMultiplier);
+            node.scale.set(scale, scale, scale);
+
+            // 4. UPDATE LABELS (from updateLabels logic)
+            if (camera && rect) {
+                // Calculate distance and visibility
+                const distanceToCamera = camera.position.distanceTo(node.position);
+                const nodePosition = node.position.clone();
+                nodePosition.y += node.scale.x * 0.6 + 0.3;
+                const screenPosition = nodePosition.clone().project(camera);
+                
+                const shouldBeVisible = distanceToCamera <= this.maxVisibleDistance && screenPosition.z < 1;
+                
+                if (shouldBeVisible) {
+                    visibleLabels.add(title);
+                    
+                    // Create label if it doesn't exist
+                    if (!this.labels.has(title)) {
+                        const label = this.createLabel(title);
+                        this.labels.set(title, label);
+                    }
+                    
+                    const label = this.labels.get(title)!;
+                    
+                    // Project to screen coordinates
+                    const x = (screenPosition.x * 0.5 + 0.5) * rect.width;
+                    const y = (-screenPosition.y * 0.5 + 0.5) * rect.height;
+
+                    // Position and scale the label
+                    label.style.left = `${x}px`;
+                    label.style.top = `${y}px`;
+                    
+                    const labelScale = Math.max(0.5, Math.min(2, this.labelScale / (distanceToCamera * 0.1)));
+                    label.style.transform = `translate(-50%, -100%) scale(${labelScale})`;
+                    
+                    // Fade based on distance
+                    const fadeStart = this.maxVisibleDistance * 0.6;
+                    if (distanceToCamera > fadeStart) {
+                        const fadeAmount = 1 - (distanceToCamera - fadeStart) / (this.maxVisibleDistance - fadeStart);
+                        label.style.opacity = fadeAmount.toString();
+                    } else {
+                        label.style.opacity = '1';
+                    }
+                    
+                    label.classList.remove('hidden');
+                }
+            }
+        }
+
+        // Clean up labels that are no longer visible (from updateLabels logic)
+        if (camera) {
+            for (const [title, label] of this.labels) {
+                if (!visibleLabels.has(title)) {
+                    this.labelContainer.removeChild(label);
+                    this.labels.delete(title);
+                }
+            }
+        }
+
+        // Update link lines (this still needs to be separate as it operates on links, not nodes)
+        for (const link of this.links) {
+            const points = [link.from.position, link.to.position];
+            link.line.geometry.setFromPoints(points);
+        }
+    }
+
+    // UPDATED: Optimized animate method using the single loop
     animate = (camera?: THREE.Camera): void => {
         if (!this.isRunning) return;
 
         this.calculateForces();
-        this.updatePositions();
-        this.updateLabels(camera);
-        this.updateColors();
+        this.updateAllNodes(camera); // Single optimized call instead of multiple separate calls
 
         this.animationId = requestAnimationFrame(() => this.animate(camera));
     }
@@ -1359,35 +1372,6 @@ updateLabels(camera?: THREE.Camera): void {
 
     setForceStrength(type: keyof typeof this.forces, value: number): void {
         this.forces[type] = value;
-    }
-
-    // Node scaling management - now handles connection counting internally
-    updateNodeScales(): void {
-        // Count connections for each node
-        const nodeConnectionCounts = new Map<string, number>();
-        
-        for (const link of this.links) {
-            // Find node titles by reverse lookup
-            let fromTitle = '';
-            let toTitle = '';
-            
-            for (const [title, node] of this.nodes) {
-                if (node === link.from) fromTitle = title;
-                if (node === link.to) toTitle = title;
-            }
-            
-            if (fromTitle && toTitle) {
-                nodeConnectionCounts.set(fromTitle, (nodeConnectionCounts.get(fromTitle) || 0) + 1);
-                nodeConnectionCounts.set(toTitle, (nodeConnectionCounts.get(toTitle) || 0) + 1);
-            }
-        }
-        
-        // Apply scaling to all nodes
-        for (const [title, node] of this.nodes) {
-            const connectionCount = nodeConnectionCounts.get(title) || 0;
-            const scale = this.baseNodeScale + (connectionCount * this.linkScaleMultiplier);
-            node.scale.set(scale, scale, scale);
-        }
     }
 
     getNodeConnectionCount(nodeTitle: string): number {
