@@ -88,6 +88,13 @@ export default class MyPlugin extends Plugin {
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SettingsTab(this.app, this));
 
+		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
+		// Using this function will automatically remove the event listener when this plugin is disabled.
+		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+		});
+
+		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
+		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 	}
 
 	onunload() {
@@ -461,6 +468,7 @@ class GraphView extends ItemView {
     currentLinkIndex: number = 0;
     nodeAddDelay: number = 5;
     linkAddDelay: number = 5;
+    labelContainer: HTMLElement;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -486,6 +494,7 @@ class GraphView extends ItemView {
 		container.style.justifyContent = "center";
 		container.style.alignItems = "center";
 		container.style.overflow = "hidden";
+        container.style.position = "relative";
 
 		// Create canvas
 		const canvas = document.createElement("canvas");
@@ -494,6 +503,18 @@ class GraphView extends ItemView {
 		canvas.style.display = "block";
 		canvas.style.margin = "0";
 		container.appendChild(canvas);
+
+
+        const labelContainer = document.createElement('div');
+        labelContainer.style.position = 'absolute';
+        labelContainer.style.top = '0';
+        labelContainer.style.left = '0';
+        labelContainer.style.width = '100%';
+        labelContainer.style.height = '100%';
+        labelContainer.style.pointerEvents = 'none';
+        labelContainer.style.zIndex = '1000';
+        container.appendChild(labelContainer);
+        this.labelContainer = labelContainer;        
 
 		// Retrieving vault notes and their links
 		const metadataCache = this.app.metadataCache;
@@ -583,7 +604,7 @@ class GraphView extends ItemView {
 			this.controls.listenToKeyEvents = () => {}; // Hack to avoid some internal bindings
 
 			// Initialize gravity graph system
-			this.gravityGraph = new GravityGraph(this.scene);
+			this.gravityGraph = new GravityGraph(this.scene, this.labelContainer);
 			
             //Apply stored settings
             this.plugin.updateSettingsParameters();
@@ -693,7 +714,7 @@ class GraphView extends ItemView {
             // Use ResizeObserver to detect container size changes (panel collapse/expand)
             this.resizeObserver = new ResizeObserver(() => {
                     this.handleResize();
-                    //console.log("ResizeObserver triggered");
+                    console.log("ResizeObserver triggered");
             });
 
             this.resizeObserver.observe(container);
@@ -901,6 +922,10 @@ class GraphView extends ItemView {
 
 	async onClose() {
 
+        if (this.labelContainer) {
+            this.labelContainer.innerHTML = '';
+        }
+
         if (this.gravityGraph) {
             this.gravityGraph.stop();
         }
@@ -965,7 +990,8 @@ class GraphView extends ItemView {
 class GravityGraph {
     scene: THREE.Scene;
     nodes: Map<string, THREE.Object3D>;
-    labels: Map<string, THREE.Sprite>;
+    labels: Map<string, HTMLElement>;
+    labelContainer: HTMLElement;
     links: Array<{from: THREE.Object3D, to: THREE.Object3D, line: THREE.Line}>;
     forces: {
         gravity: number;
@@ -982,7 +1008,7 @@ class GravityGraph {
     labelScale: number = 0.05;
     baseNodeScale: number = 1;
     linkScaleMultiplier: number = 0.1;
-    
+
     // Color pulsing properties
     colorPulseData: Map<string, {
         phase: number;
@@ -991,10 +1017,11 @@ class GravityGraph {
         pulseColor: THREE.Color;
     }>;
 
-    constructor(scene: THREE.Scene) {
+    constructor(scene: THREE.Scene, labelContainer: HTMLElement) {
         this.scene = scene;
         this.nodes = new Map<string, THREE.Object3D>();
-        this.labels = new Map<string, THREE.Sprite>();
+        this.labels = new Map<string, HTMLElement>();
+        this.labelContainer = labelContainer;
         this.links = [];
         this.forces = {
             gravity: 0.02,
@@ -1011,124 +1038,85 @@ class GravityGraph {
 
     // Utility methods for label management
 
-    createTextSprite(text: string, parameters: any = {}): THREE.Sprite {
-        const fontsize = parameters.fontsize || 18;
-        const textColor = parameters.textColor || { r: 255, g: 255, b: 255, a: 1.0 };
-        //const backgroundColor = parameters.backgroundColor || { r: 0, g: 0, b: 0, a: 0.8 };
-        
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d')!;
-        
-        // Set font and measure text
-        context.font = `${fontsize * 2}px Arial`; // 2x size for sharpness
-        const textWidth = context.measureText(text).width;
-        
-        // Set canvas size
-        canvas.width = textWidth + 16;
-        canvas.height = fontsize * 3;
-        
-        // Configure for sharp rendering
-        context.imageSmoothingEnabled = false;
-        context.font = `${fontsize * 2}px Arial`;
-        
-        /* Draw background
-        context.fillStyle = `rgba(${backgroundColor.r},${backgroundColor.g},${backgroundColor.b},${backgroundColor.a})`;
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        */
-
-        // Draw text
-        context.fillStyle = `rgba(${textColor.r},${textColor.g},${textColor.b},${textColor.a})`;
-        context.fillText(text, 8, fontsize * 1.5);
-        
-        // Create sprite
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.generateMipmaps = false;
-        texture.magFilter = THREE.NearestFilter;
-        texture.minFilter = THREE.NearestFilter;
-        
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ 
-            map: texture,
-            transparent: true
-        }));
-        
-        // Scale to desired size
-        const scale = 0.005;
-        sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
-        //console.log(text + "> x" + sprite.scale.x +" y" + sprite.scale.y +" z"+  sprite.scale.z)
-        return sprite;
+    createLabel(text: string): HTMLElement {
+        const label = document.createElement('div');
+        label.className = 'graph-label';
+        label.textContent = text;
+        this.labelContainer.appendChild(label);
+        return label;
     }
 
     updateLabelText(nodeTitle: string, newText: string): void {
         const label = this.labels.get(nodeTitle);
         if (label) {
-            this.scene.remove(label);
-            const newLabel = this.createTextSprite(newText);
-            this.labels.set(nodeTitle, newLabel);
-            this.scene.add(newLabel);
-        };
-    };
-
-    setLabelVisibility(visible: boolean): void{
-        for (const [title, label] of this.labels) {
-            label.visible = visible
+            label.textContent = newText;
         }
-    };
+    }
+
+    setLabelVisibility(visible: boolean): void {
+        for (const [title, label] of this.labels) {
+            if (visible) {
+                label.classList.remove('hidden');
+            } else {
+                label.classList.add('hidden');
+            }
+        }
+    }
 
     removeLabelForNode(nodeTitle: string): void {
         const label = this.labels.get(nodeTitle);
         if (label) {
-            this.scene.remove(label);
+            this.labelContainer.removeChild(label);
             this.labels.delete(nodeTitle);
         }
     }
 
     updateLabels(camera?: THREE.Camera): void {
+        if (!camera) return;
+        
         for (const [title, node] of this.nodes) {
             const label = this.labels.get(title);
-            if (label) {
+            if (!label) continue;
 
-                // Position label above the node with better offset for small nodes
-                label.position.copy(node.position);
-                label.position.y += node.scale.x * 0.6 + 0.3; // Reduced multiplier and base offset
+            // Get 3D position
+            const nodePosition = node.position.clone();
+            nodePosition.y += node.scale.x * 0.6 + 0.3; // Offset above node
 
-                // Distance-based visibility and scaling
-                if (camera) {
-                    const distanceToCamera = camera.position.distanceTo(node.position);
+            // Project to screen coordinates
+            const screenPosition = nodePosition.clone().project(camera);
+            
+            // Convert to pixel coordinates
+            const canvas = this.labelContainer.parentElement;
+            if (!canvas) continue;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (screenPosition.x * 0.5 + 0.5) * rect.width;
+            const y = (-screenPosition.y * 0.5 + 0.5) * rect.height;
 
-                    if (distanceToCamera <= this.maxVisibleDistance) {
-                        label.visible = true;
+            // Position the label
+            label.style.left = `${x}px`;
+            label.style.top = `${y}px`;
 
-                        // Scale label to maintain perceived size
-                        const scaleFactor = distanceToCamera * this.labelScale;
-                        //console.log("Distance to camera> " + distanceToCamera )
-                        // Need to get default proportions to compute everything correctly and the scale doesnt grow uncontrollably due to being called every frame
-                        const defScale = label.scale
-                        //console.log("Base scale: >" + defScale.x +" "+ defScale.y + " " + defScale.z)
-                        const xtoy = defScale.x/defScale.y
-                        const xtoz = defScale.x/defScale.z
-                        const scaleFactorY = scaleFactor / xtoy
-                        const scaleFactorZ = scaleFactor / xtoz
-                        // Replaced scalefactor z with 1, idk it works lmao
-                        label.scale.set(scaleFactor, scaleFactorY, 1);
-                        //console.log("Label update: "+ title + "> x"+scaleFactor + " y" + scaleFactor + " z" + scaleFactorZ)
-
-
-                        //Fade labels based on distance
-                        const fadeStart = this.maxVisibleDistance * 0.6;
-                        if (distanceToCamera > fadeStart) {
-                            const fadeAmount = 1 - (distanceToCamera - fadeStart) / (this.maxVisibleDistance - fadeStart);
-                            label.material.opacity = fadeAmount;
-                        } else {
-                            label.material.opacity = 1;
-                        }
-                    } else {
-                        label.visible = false;
-                    }
+            // Distance-based visibility and scaling
+            const distanceToCamera = camera.position.distanceTo(node.position);
+            
+            if (distanceToCamera <= this.maxVisibleDistance && screenPosition.z < 1) {
+                label.classList.remove('hidden');
+                
+                // Scale label based on distance
+                const scale = Math.max(0.5, Math.min(2, this.labelScale / (distanceToCamera * 0.1)));
+                label.style.transform = `translate(-50%, -100%) scale(${scale})`;
+                
+                // Fade based on distance
+                const fadeStart = this.maxVisibleDistance * 0.6;
+                if (distanceToCamera > fadeStart) {
+                    const fadeAmount = 1 - (distanceToCamera - fadeStart) / (this.maxVisibleDistance - fadeStart);
+                    label.style.opacity = fadeAmount.toString();
                 } else {
-                    // If no camera provided, keep labels visible and at default scale/opacity
-                    label.visible = true;
-                    label.material.opacity = 1;
+                    label.style.opacity = '1';
                 }
+            } else {
+                label.classList.add('hidden');
             }
         }
     }
@@ -1154,14 +1142,8 @@ class GravityGraph {
         this.scene.add(mesh);
         
         // Create and add label
-        const label = this.createTextSprite(title, {
-            fontsize: 16,
-            textColor: { r: 255, g: 255, b: 255, a: 1.0 },
-            backgroundColor: { r: 0, g: 0, b: 0, a: 0.7 }
-        });
-        
+        const label = this.createLabel(title);
         this.labels.set(title, label);
-        this.scene.add(label);
         
         // Initialize color pulse data
         this.colorPulseData.set(title, {
