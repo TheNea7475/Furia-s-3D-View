@@ -28,6 +28,8 @@ interface PluginSettings {
     bloomRadius: number;
     bloomThreshold: number;
     linkScaleMultiplier: number;
+    folderColors: { [folderPath: string]: string }; // folderPath -> color hex or 'inherited'
+    defaultNodeColor: string; // Default color for nodes not in any folder
 }
 
 const DEFAULT_SETTINGS: PluginSettings = {
@@ -44,8 +46,54 @@ const DEFAULT_SETTINGS: PluginSettings = {
     bloomStrength: 2,
     bloomRadius: 0.1,
     bloomThreshold: 0.9,
-    linkScaleMultiplier: 0.1
+    linkScaleMultiplier: 0.1,
+    folderColors: {},
+    defaultNodeColor: '#ffffff'
 }
+
+
+//Utility general functions
+
+function getFolderHierarchy(folderPath: string): string[] {
+    if (!folderPath || folderPath === '/') return [];
+    const parts = folderPath.split('/').filter(part => part.length > 0);
+    const hierarchy = [];
+    for (let i = 0; i < parts.length; i++) {
+        hierarchy.push(parts.slice(0, i + 1).join('/'));
+    }
+    return hierarchy;
+}
+
+function getNodeColorForFile(filePath: string, settings: PluginSettings): string {
+    // Get the folder path from file path
+    const folderPath = filePath.substring(0, filePath.lastIndexOf('/'));
+    
+    if (!folderPath) {
+        // File is in root, use default color
+        return settings.defaultNodeColor;
+    }
+    
+    // Get folder hierarchy from deepest to shallowest
+    const hierarchy = getFolderHierarchy(folderPath).reverse();
+    
+    // Find the first folder in hierarchy that has a non-inherited color
+    for (const folder of hierarchy) {
+        const color = settings.folderColors[folder];
+        if (color && color !== 'inherited') {
+            return color;
+        }
+    }
+    
+    // If no folder has a specific color, use default
+    return settings.defaultNodeColor;
+}
+
+function hexToThreeColor(hex: string): number {
+    // Remove # if present
+    hex = hex.replace('#', '');
+    return parseInt(hex, 16);
+}
+
 
 
 export default class MyPlugin extends Plugin {
@@ -116,6 +164,10 @@ export default class MyPlugin extends Plugin {
 				linkStrength: this.settings.forces.linkStrength
 			};
 
+
+            // NEW: Update node colors
+            this.graphView.gravityGraph.updateNodeColors(this.settings);
+
 		    // Update labels max distance in the GraphView's GravityGraph if it exists
 			this.graphView.gravityGraph.maxVisibleDistance = this.settings.maxVisibleDistance;
 
@@ -168,9 +220,8 @@ class SettingsTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	display(): void {
+	async display(): Promise<void> {
 		const {containerEl} = this;
-
 		containerEl.empty();
 
 		// Forces settings header
@@ -437,7 +488,101 @@ class SettingsTab extends PluginSettingTab {
                 }));
 
 
+            // Folder Colors settings header
+            new Setting(containerEl).setName('Folder Colors').setHeading()
+                .setDesc('Assign colors to folders. Notes inherit colors from their folder hierarchy.');
+
+            // Default node color
+            new Setting(containerEl)
+                .setName('Default node color')
+                .setDesc('Color for nodes not in any folder or when no folder color is set')
+                .addColorPicker(colorPicker => colorPicker
+                    .setValue(this.plugin.settings.defaultNodeColor)
+                    .onChange(async (value) => {
+                        this.plugin.settings.defaultNodeColor = value;
+                        await this.plugin.saveSettings();
+                        this.plugin.updateSettingsParameters();
+                    }));
+
+            // Get all folders and create color settings for each
+            const folders = await this.getAllFolders();
+            
+            for (const folderPath of folders) {
+                const currentColor = this.plugin.settings.folderColors[folderPath] || 'inherited';
+                
+                const setting = new Setting(containerEl)
+                    .setName(`📁 ${folderPath}`)
+                    .setDesc(`Color for notes in "${folderPath}" folder`)
+                    .addDropdown(dropdown => dropdown
+                        .addOption('inherited', 'Inherited')
+                        .addOption('custom', 'Custom Color')
+                        .setValue(currentColor === 'inherited' ? 'inherited' : 'custom')
+                        .onChange(async (value) => {
+                            if (value === 'inherited') {
+                                this.plugin.settings.folderColors[folderPath] = 'inherited';
+                                await this.plugin.saveSettings();
+                                this.plugin.updateSettingsParameters();
+                                this.display(); // Refresh to hide color picker
+                            } else {
+                                // Set default custom color if none exists
+                                if (!this.plugin.settings.folderColors[folderPath] || 
+                                    this.plugin.settings.folderColors[folderPath] === 'inherited') {
+                                    this.plugin.settings.folderColors[folderPath] = '#ffffff';
+                                }
+                                await this.plugin.saveSettings();
+                                this.plugin.updateSettingsParameters();
+                                this.display(); // Refresh to show color picker
+                            }
+                        }));
+
+                // Add color picker conditionally
+                if (currentColor !== 'inherited') {
+                    setting.addColorPicker(colorPicker => colorPicker
+                        .setValue(currentColor)
+                        .onChange(async (value) => {
+                            this.plugin.settings.folderColors[folderPath] = value;
+                            await this.plugin.saveSettings();
+                            this.plugin.updateSettingsParameters();
+                        }));
+                }
+            }
+
+            // Reset folder colors button
+            new Setting(containerEl)
+                .setName('Reset folder colors')
+                .setDesc('Reset all folder colors to inherited')
+                .addButton(button => button
+                    .setButtonText('Reset All')
+                    .onClick(async () => {
+                        this.plugin.settings.folderColors = {};
+                        this.plugin.settings.defaultNodeColor = '#ffffff';
+                        await this.plugin.saveSettings();
+                        this.plugin.updateSettingsParameters();
+                        this.display(); // Refresh the UI
+                    }));     
+
+
+
+
+
 	}
+
+    // Other Settings class methods
+    private async getAllFolders(): Promise<string[]> {
+        const folders = new Set<string>();
+        const files = this.app.vault.getMarkdownFiles();
+        
+        for (const file of files) {
+            const folderPath = file.path.substring(0, file.path.lastIndexOf('/'));
+            if (folderPath) {
+                // Add all parent folders
+                const hierarchy = getFolderHierarchy(folderPath);
+                hierarchy.forEach(folder => folders.add(folder));
+            }
+        }
+        
+        return Array.from(folders).sort();
+    }
 }
 
 
@@ -632,19 +777,6 @@ class GraphView extends ItemView {
 			};
 			this.app.workspace.on('active-leaf-change', this.activeLeafChangeHandler);
 
-
-            // this has been REPLACED WITH GRADUAL ADDITION. Nodes are stored before the timeout for rendering
-			/* Add all nodes to gravity system (GravityGraph will create meshes)
-			for (const file of files) {
-				this.gravityGraph.addNode(file.basename);
-			}
-
-			// Add all links to gravity system
-			for (const [from, to] of links) {
-				this.gravityGraph.addLink(from, to);
-			}
-            */
-
             // Start adding nodes gradually after a short delay.
             
             setTimeout(() => {
@@ -729,7 +861,7 @@ class GraphView extends ItemView {
         const addNextNode = () => {
             if (this.currentNodeIndex < this.allFiles.length) {
                 const file = this.allFiles[this.currentNodeIndex];
-                this.gravityGraph.addNode(file.basename);
+                this.gravityGraph.addNode(file.basename, file.path);
                 
                 // Get the newly added node and give it a random position
                 const newNode = this.gravityGraph.nodes.get(file.basename);
@@ -1006,6 +1138,8 @@ class GravityGraph {
     labelScale: number = 0.05;
     baseNodeScale: number = 1;
     linkScaleMultiplier: number = 0.1;
+    nodeFilePaths: Map<string, string>;
+    currentSettings: PluginSettings | null;
 
     // Color pulsing properties
     colorPulseData: Map<string, {
@@ -1032,6 +1166,8 @@ class GravityGraph {
         this.animationId = null;
         this.particleSystem = new LinkParticleSystem(scene);
         this.colorPulseData = new Map();
+        this.nodeFilePaths = new Map<string, string>();
+        this.currentSettings = null;
     }
 
     // Utility methods for label management
@@ -1069,14 +1205,15 @@ class GravityGraph {
         }
     }
 
-    // Updated addNode method that creates the mesh internally
-    addNode(title: string): void {
+    addNode(title: string, filePath?: string): void {
         // Create the node mesh
         const geometry = new THREE.SphereGeometry(0.3, 16, 16);
+        if (filePath) {this.nodeFilePaths.set(title, filePath);}// Store file path for color calculation
+        const nodeColor = this.getNodeColor(title);
         const material = new THREE.MeshStandardMaterial({
-            color: 0xffffff, //make customizable
-        	emissive: 0xffffff,
-	        emissiveIntensity: 0.5,
+            color: nodeColor, // Use your selected color as base
+            emissive: nodeColor, // Start with node base color emission
+            emissiveIntensity: 0.5,
         });
         const mesh = new THREE.Mesh(geometry, material);
         mesh.userData.noteTitle = title;
@@ -1089,14 +1226,70 @@ class GravityGraph {
         this.nodes.set(title, mesh);
         this.scene.add(mesh);
         
-        // Initialize color pulse data
+        // Initialize color pulse data with the correct color
+        const baseColor = new THREE.Color(nodeColor);
+
+        //Calculate brighness multiplier with dedicated function
+        const multiplier = this.calculateBrightnessMultiplier(baseColor)
+
         this.colorPulseData.set(title, {
-            phase: Math.random() * Math.PI * 2, // Random starting phase
-            speed: 0.5 + Math.random() * 1.5,   // Random speed between 0.5 and 2.0
-            baseColor: new THREE.Color(0xffffff), // White
-            pulseColor: new THREE.Color(0x00ffff) // Yellow
+            phase: Math.random() * Math.PI * 2,
+            speed: 0.5 + Math.random() * 1.5,   //Make customizable
+            baseColor: new THREE.Color(nodeColor),
+            pulseColor: new THREE.Color(nodeColor).multiplyScalar(multiplier),
         });
+    }
+
+    private calculateBrightnessMultiplier(baseColor: THREE.Color): number {
+
+        // Calculate brightness using luminance formula. Darker colors get a big multiplier so they can glow
+        // Use a Smooth curve that keeps bright colors at 1x and ramps up for darker colors
+        const brightness = baseColor.r * 0.299 + baseColor.g * 0.587 + baseColor.b * 0.114;
+        const multiplier = 0.3 + Math.pow(Math.max(0, 0.85 - brightness) / 0.85, 2) * 19.5;
+        return multiplier
+    }
+
+    private getNodeColor(nodeTitle: string): number {
+        if (!this.currentSettings){
+            return 0xffffff;
+        }
         
+        const filePath = this.nodeFilePaths.get(nodeTitle);
+        if (!filePath) return hexToThreeColor(this.currentSettings.defaultNodeColor);
+        
+        const colorHex = getNodeColorForFile(filePath, this.currentSettings);
+        return hexToThreeColor(colorHex);
+    }
+
+    updateNodeColors(settings: PluginSettings): void {
+        this.currentSettings = settings;
+        
+        for (const [title, node] of this.nodes) {
+            const color = this.getNodeColor(title);
+            const threeColor = new THREE.Color(color);
+            
+            // Update node material - base color AND emissive
+            if (node instanceof THREE.Mesh && node.material) {
+                if (Array.isArray(node.material)) {
+                    node.material.forEach(mat => {
+                        if ('color' in mat && 'emissive' in mat) {
+                            (mat as any).color.copy(threeColor); // Set base color
+                            (mat as any).emissive.set(threeColor); // Reset emissive to black
+                        }
+                    });
+                } else if ('color' in node.material && 'emissive' in node.material) {
+                    (node.material as any).color.copy(threeColor); // Set base color
+                    (node.material as any).emissive.set(threeColor); // Reset emissive to black
+                }
+            }
+            // Update pulse data colors
+            const pulseData = this.colorPulseData.get(title);
+            if (pulseData) {
+                pulseData.baseColor.copy(threeColor);
+                const multiplier = this.calculateBrightnessMultiplier(threeColor)
+                pulseData.pulseColor.copy(threeColor).multiplyScalar(multiplier);
+            }
+        }
     }
 
     addLink(from: string, to: string): void {
@@ -1252,30 +1445,33 @@ class GravityGraph {
 
             node.position.add(velocity);
 
-            // 2. UPDATE COLORS (from updateColors logic)
+            // 2. UPDATE COLORS (modified to use folder-based colors)
             const pulseData = this.colorPulseData.get(title);
             if (pulseData) {
                 // Update phase
-                pulseData.phase += pulseData.speed * 0.016; // Assuming ~60fps
+                pulseData.phase += pulseData.speed * 0.016;
                 
                 // Calculate pulse factor (0 to 1)
                 const pulseFactor = (Math.sin(pulseData.phase) + 1) * 0.5;
                 
                 // Interpolate between base color and pulse color
-                const currentColor = new THREE.Color();
+                const currentColor = new THREE.Color(); //To make: avoid creating a new obj every frame
                 currentColor.lerpColors(pulseData.baseColor, pulseData.pulseColor, pulseFactor);
                 
-                // Apply color to node material and emissive
+                // Apply color to node material emissive and emissive intensity
                 if (node instanceof THREE.Mesh && node.material) {
                     if (Array.isArray(node.material)) {
                         node.material.forEach(mat => {
-                            if ('color' in mat) {
-                                (mat as any).color.copy(currentColor);
+                            if ('emissive' in mat && 'emissiveIntensity' in mat) {
+                                //(mat as any).color.copy(currentColor); To change base color
+                                //(mat as any).emissive.copy(currentColor); To change pulsing color
+                                (mat as any).emissiveIntensity = pulseFactor; // between 0 and 1
                             }
                         });
-                    } else if ('color' in node.material) {
-                        (node.material as any).color.copy(currentColor);
-                        (node.material as any).emissive.copy(currentColor);
+                    } else if ('emissive' in node.material && 'emissiveIntensity' in node.material) {
+                        //(node.material as any).color.copy(currentColor); To change base color
+                        //(node.material as any).emissive.copy(currentColor); To change pulsing color
+                        (node.material as any).emissiveIntensity = pulseFactor; // between 0 and 1
                     }
                 }
             }
