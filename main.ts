@@ -1147,6 +1147,7 @@ class GravityGraph {
         speed: number;
         baseColor: THREE.Color;
         pulseColor: THREE.Color;
+        emissiveStrenghtMultiplier: number;
     }>;
 
     constructor(scene: THREE.Scene, labelContainer: HTMLElement) {
@@ -1237,15 +1238,16 @@ class GravityGraph {
             speed: 0.5 + Math.random() * 1.5,   //Make customizable
             baseColor: new THREE.Color(nodeColor),
             pulseColor: new THREE.Color(nodeColor).multiplyScalar(multiplier),
+            emissiveStrenghtMultiplier: multiplier,
         });
     }
 
     private calculateBrightnessMultiplier(baseColor: THREE.Color): number {
 
         // Calculate brightness using luminance formula. Darker colors get a big multiplier so they can glow
-        // Use a Smooth curve that keeps bright colors at 1x and ramps up for darker colors
+        // Use a Smooth curve that keeps bright colors at 0x and ramps up for darker colors
         const brightness = baseColor.r * 0.299 + baseColor.g * 0.587 + baseColor.b * 0.114;
-        const multiplier = 0.3 + Math.pow(Math.max(0, 0.85 - brightness) / 0.85, 2) * 19.5;
+        const multiplier = 0 + Math.pow(Math.max(0, 0.85 - brightness) / 0.85, 2) * 10;
         return multiplier
     }
 
@@ -1285,9 +1287,10 @@ class GravityGraph {
             // Update pulse data colors
             const pulseData = this.colorPulseData.get(title);
             if (pulseData) {
-                pulseData.baseColor.copy(threeColor);
                 const multiplier = this.calculateBrightnessMultiplier(threeColor)
+                pulseData.baseColor.copy(threeColor);
                 pulseData.pulseColor.copy(threeColor).multiplyScalar(multiplier);
+                pulseData.emissiveStrenghtMultiplier = multiplier
             }
         }
     }
@@ -1406,6 +1409,7 @@ class GravityGraph {
 
     // NEW: Optimized single-loop update method that combines all node operations
     updateAllNodes(camera?: THREE.Camera): void {
+
         // Pre-calculate connection counts for scaling
         const nodeConnectionCounts = new Map<string, number>();
         for (const link of this.links) {
@@ -1455,8 +1459,9 @@ class GravityGraph {
                 const pulseFactor = (Math.sin(pulseData.phase) + 1) * 0.5;
                 
                 // Interpolate between base color and pulse color
-                const currentColor = new THREE.Color(); //To make: avoid creating a new obj every frame
-                currentColor.lerpColors(pulseData.baseColor, pulseData.pulseColor, pulseFactor);
+                
+                //const currentColor = new THREE.Color(); //To make: avoid creating a new obj every frame
+                //currentColor.lerpColors(pulseData.baseColor, pulseData.pulseColor, pulseFactor); //Disabled since color pusling has been disabled
                 
                 // Apply color to node material emissive and emissive intensity
                 if (node instanceof THREE.Mesh && node.material) {
@@ -1465,13 +1470,13 @@ class GravityGraph {
                             if ('emissive' in mat && 'emissiveIntensity' in mat) {
                                 //(mat as any).color.copy(currentColor); To change base color
                                 //(mat as any).emissive.copy(currentColor); To change pulsing color
-                                (mat as any).emissiveIntensity = pulseFactor; // between 0 and 1
+                                (mat as any).emissiveIntensity = pulseFactor * pulseData.emissiveStrenghtMultiplier; // between 0 and 1 multiplied for a factor that makes darker color glow
                             }
                         });
                     } else if ('emissive' in node.material && 'emissiveIntensity' in node.material) {
                         //(node.material as any).color.copy(currentColor); To change base color
                         //(node.material as any).emissive.copy(currentColor); To change pulsing color
-                        (node.material as any).emissiveIntensity = pulseFactor; // between 0 and 1
+                        (node.material as any).emissiveIntensity = pulseFactor * pulseData.emissiveStrenghtMultiplier; // between 0 and 1, multiplied by a factor
                     }
                 }
             }

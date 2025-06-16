@@ -1,12 +1,17 @@
 .graph-label {
     position: absolute;
-    background: var(--interactive-background);
+    background: transparent;
     color: var(--interactive-accent);
     padding: 4px;
     border-radius: 4px;
     font-size: 12px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     border: 1px solid var(--interactive-accent);
+
+    backdrop-filter: blur(6px); /* blur what's behind */
+    -webkit-backdrop-filter: blur(6px); /* Safari support */
+
+    /* Optional: Add a slight transparent border or shadow to improve visibility */
 }
 
 .graph-label.hidden {
