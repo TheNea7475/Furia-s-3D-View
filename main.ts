@@ -30,6 +30,9 @@ interface PluginSettings {
     linkScaleMultiplier: number;
     folderColors: { [folderPath: string]: string }; // folderPath -> color hex or 'inherited'
     defaultNodeColor: string; // Default color for nodes not in any folder
+    maxParticles: number;
+    particlesSpawnRate: number;
+    particlesShuffleDelay: number;
 }
 
 const DEFAULT_SETTINGS: PluginSettings = {
@@ -48,7 +51,10 @@ const DEFAULT_SETTINGS: PluginSettings = {
     bloomThreshold: 0.9,
     linkScaleMultiplier: 0.1,
     folderColors: {},
-    defaultNodeColor: '#ffffff'
+    defaultNodeColor: '#ffffff',
+    maxParticles: 500,
+    particlesSpawnRate: 2000, //milliseconds
+    particlesShuffleDelay: 10, //milliseconds
 }
 
 
@@ -175,6 +181,11 @@ export default class MyPlugin extends Plugin {
             this.graphView.gravityGraph.baseNodeScale = this.settings.baseNodeScale;
             this.graphView.gravityGraph.linkScaleMultiplier = this.settings.linkScaleMultiplier;
             this.graphView.gravityGraph.labelScale = this.settings.labelScale;
+
+            //Update particles settings
+            this.graphView.gravityGraph.setMaxParticles(this.settings.maxParticles)
+            this.graphView.gravityGraph.setParticleSpawnRate(this.settings.particlesSpawnRate)
+            this.graphView.gravityGraph.setParticlesShuffleDelay(this.settings.particlesShuffleDelay)
 
             //Update bloom settings, if composer ready
             if (this.graphView.bloomPass) {
@@ -429,6 +440,55 @@ class SettingsTab extends PluginSettingTab {
 						this.plugin.settings.linkScaleMultiplier = 0.1
 					}
 					this.plugin.settings.linkScaleMultiplier = value/100;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+            // Particles
+            new Setting(containerEl)
+			.setName('Max particles number')
+			.setDesc("How many particles are allowed to exist in a frame")
+			.addSlider(slider => slider
+				.setLimits(100, 1000, 1)
+				.setValue(this.plugin.settings.maxParticles)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.maxParticles) {
+						this.plugin.settings.maxParticles = 500
+					}
+					this.plugin.settings.maxParticles = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+            new Setting(containerEl)
+			.setName('Particles spawnrate')
+			.setDesc("Delay between particles spawning attempt, in milliseconds")
+			.addSlider(slider => slider
+				.setLimits(100, 5000, 1)
+				.setValue(this.plugin.settings.particlesSpawnRate)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.particlesSpawnRate) {
+						this.plugin.settings.particlesSpawnRate = 500
+					}
+					this.plugin.settings.particlesSpawnRate = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+            new Setting(containerEl)
+			.setName('Particles shuffle delay')
+			.setDesc("Delay between each particle spawn, in milliseconds")
+			.addSlider(slider => slider
+				.setLimits(0, 200, 10)
+				.setValue(this.plugin.settings.particlesShuffleDelay)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.particlesShuffleDelay) {
+						this.plugin.settings.particlesShuffleDelay = 10
+					}
+					this.plugin.settings.particlesShuffleDelay = value;
 					await this.plugin.saveSettings();
 					this.plugin.updateSettingsParameters();
 				}));
@@ -797,9 +857,9 @@ class GraphView extends ItemView {
 			// Initialize positions and start physics simulation
 			this.gravityGraph.initializePositions();
 			this.gravityGraph.start(this.camera);
-			this.gravityGraph.setParticleSpawnRate(10);
-			this.gravityGraph.setMaxParticles(10000);
-
+			this.gravityGraph.setParticleSpawnRate(this.plugin.settings.particlesSpawnRate);
+			this.gravityGraph.setMaxParticles(this.plugin.settings.maxParticles);
+            this.gravityGraph.setParticlesShuffleDelay(this.plugin.settings.particlesShuffleDelay)
 
 			//Adding a raycaster for mouse clicking
 			const raycaster = new THREE.Raycaster();
@@ -1397,12 +1457,30 @@ class GravityGraph {
     setParticleSpawnRate(milliseconds: number): void {
         if (this.particleSystem) {
             this.particleSystem.setSpawnRate(milliseconds);
+            console.log("Particle count set")
+        }
+        else {
+            console.log("Particle system not initialized")
         }
     }
 
     setMaxParticles(maxParticles: number): void{
         if (this.particleSystem) {
             this.particleSystem.setMaxParticles(maxParticles);
+            console.log("Particle count set")
+        }
+        else{
+            console.log("Particle system not initialized")
+        }
+    }
+
+    setParticlesShuffleDelay(delay: number): void{
+        if (this.particleSystem) {
+            this.particleSystem.setParticlesShuffleDelay(delay);
+            console.log("Particle shuffle delay set")
+        }
+        else{
+            console.log("Particle system not initialized")
         }
     }
 
@@ -1614,19 +1692,20 @@ class LinkParticleSystem {
     maxParticles: number;
     spawnRate: number;
     lastSpawn: number;
+    particlesDelay: number;
 
-    constructor(scene: THREE.Scene, maxParticles: number = 50) {
+    constructor(scene: THREE.Scene, maxParticles: number = 5000) {
         this.scene = scene;
         this.particles = [];
         this.particlePool = [];
         this.maxParticles = maxParticles;
         this.spawnRate = 1000; // milliseconds between spawns
         this.lastSpawn = 0;
-        
         this.initializeParticlePool();
     }
 
     private initializeParticlePool(): void {
+        this.dispose()
         // Pre-create particle meshes for performance
         for (let i = 0; i < this.maxParticles; i++) {
             const geometry = new THREE.SphereGeometry(0.1, 8, 8);
@@ -1688,21 +1767,23 @@ class LinkParticleSystem {
     update(deltaTime: number, links: Array<{from: THREE.Object3D, to: THREE.Object3D}>): void {
         const currentTime = performance.now();
 
-        // Spawn new particle in a random link
+        /* Spawn new particle in a random link
         if (currentTime - this.lastSpawn > this.spawnRate && links.length > 0) {
             const randomLink = links[Math.floor(Math.random() * links.length)];
             this.spawnParticle(randomLink);
             this.lastSpawn = currentTime;
         }
+        */
 
-		/* Spawn new particles in all links at the same time.
-		if (currentTime - this.lastSpawn > this.spawnRate && links.length > 0) {
-			for (const link of links) {
-				this.spawnParticle(link);
-			}
-			this.lastSpawn = currentTime;
-		}
-		*/
+        // Spawn particles in all links
+        if (currentTime - this.lastSpawn > this.spawnRate && links.length > 0) {
+            links.forEach((link, index) => {
+                setTimeout(() => {
+                    this.spawnParticle(link);
+                }, index * this.particlesDelay);
+            });
+            this.lastSpawn = currentTime;
+        }
 
         // Update existing particles
         for (let i = this.particles.length - 1; i >= 0; i--) {
@@ -1737,9 +1818,13 @@ class LinkParticleSystem {
 
 	setMaxParticles(maxParticles: number): void{
 		this.maxParticles = maxParticles;
+        this.initializeParticlePool();
 	}
 
-    // Method to clear all particles
+    setParticlesShuffleDelay(delay: number): void{
+		this.particlesDelay = delay;
+	}
+
     clearParticles(): void {
         for (const particle of this.particles) {
             particle.mesh.visible = false;
