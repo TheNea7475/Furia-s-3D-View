@@ -576,7 +576,6 @@ class SettingsTab extends PluginSettingTab {
                     
                     const setting = new Setting(containerEl)
                         .setName(`📁 ${folderPath}`)
-                        .setDesc(`Color assignment for "${folderPath}" folder`)
                         .addDropdown(dropdown => dropdown
                             .addOption('inherited', 'Inherited (use default)')
                             .addOption('custom', 'Custom Color')
