@@ -434,7 +434,7 @@ class SettingsTab extends PluginSettingTab {
 				}));
 
             // Bloom settings header
-            new Setting(containerEl).setName('Bloom').setHeading().setDesc("Pretty resource intensive");
+            new Setting(containerEl).setName('Bloom').setHeading();
 
             // Bloom strenght
             new Setting(containerEl)
@@ -488,78 +488,88 @@ class SettingsTab extends PluginSettingTab {
                 }));
 
 
-            // Folder Colors settings header
-            new Setting(containerEl).setName('Folder Colors').setHeading()
-                .setDesc('Assign colors to folders. Notes inherit colors from their folder hierarchy.');
+                // Heading
+                new Setting(containerEl)
+                    .setName('Folder Colors')
+                    .setHeading()
+                    .setDesc('Assign colors to folders. Notes inherit colors from their folder hierarchy. Configure individual folder colors.')
 
-            // Default node color
-            new Setting(containerEl)
-                .setName('Default node color')
-                .setDesc('Color for nodes not in any folder or when no folder color is set')
-                .addColorPicker(colorPicker => colorPicker
-                    .setValue(this.plugin.settings.defaultNodeColor)
-                    .onChange(async (value) => {
-                        this.plugin.settings.defaultNodeColor = value;
-                        await this.plugin.saveSettings();
-                        this.plugin.updateSettingsParameters();
-                    }));
-
-            // Get all folders and create color settings for each
-            const folders = await this.getAllFolders();
-            
-            for (const folderPath of folders) {
-                const currentColor = this.plugin.settings.folderColors[folderPath] || 'inherited';
-                
-                const setting = new Setting(containerEl)
-                    .setName(`📁 ${folderPath}`)
-                    .setDesc(`Color for notes in "${folderPath}" folder`)
-                    .addDropdown(dropdown => dropdown
-                        .addOption('inherited', 'Inherited')
-                        .addOption('custom', 'Custom Color')
-                        .setValue(currentColor === 'inherited' ? 'inherited' : 'custom')
+                new Setting(containerEl)
+                    .setName('Default node color')
+                    .setDesc('Color for nodes not in any folder or when no folder color is set')
+                    .addColorPicker(colorPicker => colorPicker
+                        .setValue(this.plugin.settings.defaultNodeColor)
                         .onChange(async (value) => {
-                            if (value === 'inherited') {
-                                this.plugin.settings.folderColors[folderPath] = 'inherited';
-                                await this.plugin.saveSettings();
-                                this.plugin.updateSettingsParameters();
-                                this.display(); // Refresh to hide color picker
-                            } else {
-                                // Set default custom color if none exists
-                                if (!this.plugin.settings.folderColors[folderPath] || 
-                                    this.plugin.settings.folderColors[folderPath] === 'inherited') {
-                                    this.plugin.settings.folderColors[folderPath] = '#ffffff';
-                                }
-                                await this.plugin.saveSettings();
-                                this.plugin.updateSettingsParameters();
-                                this.display(); // Refresh to show color picker
-                            }
-                        }));
-
-                // Add color picker conditionally
-                if (currentColor !== 'inherited') {
-                    setting.addColorPicker(colorPicker => colorPicker
-                        .setValue(currentColor)
-                        .onChange(async (value) => {
-                            this.plugin.settings.folderColors[folderPath] = value;
+                            this.plugin.settings.defaultNodeColor = value;
                             await this.plugin.saveSettings();
                             this.plugin.updateSettingsParameters();
                         }));
-                }
-            }
+                        
+                // Get all folders and create color settings for each
+                const folders = await this.getAllFolders();
 
-            // Reset folder colors button
-            new Setting(containerEl)
-                .setName('Reset folder colors')
-                .setDesc('Reset all folder colors to inherited')
-                .addButton(button => button
-                    .setButtonText('Reset All')
-                    .onClick(async () => {
-                        this.plugin.settings.folderColors = {};
-                        this.plugin.settings.defaultNodeColor = '#ffffff';
-                        await this.plugin.saveSettings();
-                        this.plugin.updateSettingsParameters();
-                        this.display(); // Refresh the UI
-                    }));     
+                // Sort folders alphabetically for better organization
+                const sortedFolders = folders.sort((a, b) => a.localeCompare(b));
+
+                for (const folderPath of sortedFolders) {
+                    const currentColor = this.plugin.settings.folderColors[folderPath] || 'inherited';
+                    
+                    const setting = new Setting(containerEl)
+                        .setName(`📁 ${folderPath}`)
+                        .setDesc(`Color assignment for "${folderPath}" folder`)
+                        .addDropdown(dropdown => dropdown
+                            .addOption('inherited', 'Inherited (use default)')
+                            .addOption('custom', 'Custom Color')
+                            .setValue(currentColor === 'inherited' ? 'inherited' : 'custom')
+                            .onChange(async (value) => {
+                                if (value === 'inherited') {
+                                    this.plugin.settings.folderColors[folderPath] = 'inherited';
+                                    await this.plugin.saveSettings();
+                                    this.plugin.updateSettingsParameters();
+                                    this.display(); // Refresh to hide color picker
+                                } else {
+                                    // Set default custom color if none exists
+                                    if (!this.plugin.settings.folderColors[folderPath] ||
+                                        this.plugin.settings.folderColors[folderPath] === 'inherited') {
+                                        this.plugin.settings.folderColors[folderPath] = this.plugin.settings.defaultNodeColor;
+                                    }
+                                    await this.plugin.saveSettings();
+                                    this.plugin.updateSettingsParameters();
+                                    this.display(); // Refresh to show color picker
+                                }
+                            }));
+
+                    // Add color picker conditionally
+                    if (currentColor !== 'inherited') {
+                        setting.addColorPicker(colorPicker => colorPicker
+                            .setValue(currentColor)
+                            .onChange(async (value) => {
+                                this.plugin.settings.folderColors[folderPath] = value;
+                                await this.plugin.saveSettings();
+                                this.plugin.updateSettingsParameters();
+                            }));
+                    }
+                }
+
+                // Actions Section
+                new Setting(containerEl)
+                    .setName('Actions')
+                    .setHeading();
+
+                // Reset folder colors button
+                new Setting(containerEl)
+                    .setName('Reset all folder colors')
+                    .setDesc('Reset all folder colors to inherited and restore default node color to white')
+                    .addButton(button => button
+                        .setButtonText('Reset All Colors')
+                        .setClass('mod-warning')
+                        .onClick(async () => {
+                            this.plugin.settings.folderColors = {};
+                            this.plugin.settings.defaultNodeColor = '#ffffff';
+                            await this.plugin.saveSettings();
+                            this.plugin.updateSettingsParameters();
+                            this.display(); // Refresh the UI
+                        }));     
 
 
 
