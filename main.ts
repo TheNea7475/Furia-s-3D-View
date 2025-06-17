@@ -1774,9 +1774,12 @@ class LinkParticleSystem {
         }
         */
 
-        // Spawn particles in all links
+        // Spawn particles in all links, shuffling them
         if (currentTime - this.lastSpawn > this.spawnRate && links.length > 0) {
-            links.forEach((link, index) => {
+            // Shuffle the links array
+            const shuffledLinks = [...links].sort(() => Math.random() - 0.5);
+            
+            shuffledLinks.forEach((link, index) => {
                 setTimeout(() => {
                     this.spawnParticle(link);
                 }, index * this.particlesDelay);
