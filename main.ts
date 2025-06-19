@@ -23,7 +23,8 @@ interface PluginSettings {
     };
     maxVisibleDistance: number;
     labelScale: number;
-    baseNodeScale: number
+    baseNodeScale: number;
+    autoFocus: boolean;
     bloomStrength: number;
     bloomRadius: number;
     bloomThreshold: number;
@@ -46,6 +47,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
     maxVisibleDistance: 15,
     labelScale: 0.05,
     baseNodeScale: 1,
+    autoFocus: true,
     bloomStrength: 2,
     bloomRadius: 0.1,
     bloomThreshold: 0.9,
@@ -493,6 +495,17 @@ class SettingsTab extends PluginSettingTab {
 					this.plugin.updateSettingsParameters();
 				}));
 
+                new Setting(containerEl)
+                    .setName('Auto Focus')
+                    .setDesc("Automatically focus a node when it's note is clicked")
+                    .addToggle(toggle => toggle
+                        .setValue(this.plugin.settings.autoFocus)
+                        .onChange(async (value) => {
+                            this.plugin.settings.autoFocus = value;
+                            await this.plugin.saveSettings();
+                            this.plugin.updateSettingsParameters();
+                        }));
+
             // Bloom settings header
             new Setting(containerEl).setName('Bloom').setHeading();
 
@@ -841,7 +854,7 @@ class GraphView extends ItemView {
 			// Listen for active leaf changes, used for auto node focusing
 			this.activeLeafChangeHandler = () => {
 				const activeNoteName = this.getCurrentActiveNote();
-				if (activeNoteName) {
+				if (activeNoteName && this.plugin.settings.autoFocus) {
 					this.focusOnNodeByName(activeNoteName);
 				}
 			};
