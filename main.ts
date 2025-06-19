@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, ItemView } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, ItemView, TFile, TAbstractFile} from 'obsidian';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -681,6 +681,7 @@ class GraphView extends ItemView {
     nodeAddDelay: number = 5;
     linkAddDelay: number = 5;
     labelContainer: HTMLElement;
+    private previousLinks = new Map<string, string[]>();
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -916,12 +917,13 @@ class GraphView extends ItemView {
             });
 
             this.resizeObserver.observe(container);
-            
-
-			//End calls
 
 
 		}, 100); //scene rendering delay
+    
+        // Setting up listeners
+
+        this.setupLiveUpdates();
 	}
 
     // Graph used methods
@@ -1117,6 +1119,216 @@ class GraphView extends ItemView {
 			this.focusOnNode(targetNode);
 		}
 	}
+
+    private setupLiveUpdates() {
+        // Listener per nuove note
+        this.registerEvent(
+            this.app.vault.on('create', (file: TAbstractFile) => {
+                if (file instanceof TFile && file.extension === 'md') {
+                    this.onNewNoteCreated(file);
+                }
+            })
+        );
+
+        // Listener per modifiche (per intercettare nuovi link)
+        this.registerEvent(
+            this.app.vault.on('modify', (file: TAbstractFile) => {
+                if (file instanceof TFile && file.extension === 'md') {
+                    this.checkForNewLinks(file);
+                }
+            })
+        );
+
+        // Listener per note eliminate
+        this.registerEvent(
+            this.app.vault.on('delete', (file: TAbstractFile) => {
+                if (file instanceof TFile && file.extension === 'md') {
+                    this.onNoteDeleted(file);
+                }
+            })
+        );
+
+        // Listener per note rinominate
+        this.registerEvent(
+            this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
+                if (file instanceof TFile && file.extension === 'md') {
+                    this.onNoteRenamed(file, oldPath);
+                }
+            })
+        );
+
+        // Inizializza la cache dei link esistenti
+        this.initializeLinkCache();
+    }
+
+    //Live updates methods to call stuff in gravityGraph
+    private async onNewNoteCreated(file: TFile) {
+        if (!this.gravityGraph) return;
+
+        const noteTitle = file.basename;
+        console.log('Nuova nota creata:', noteTitle);
+
+        // Aggiungi il nodo al grafo
+        this.gravityGraph.addNode(noteTitle, file.path);
+
+        // Leggi il contenuto per eventuali link esistenti
+        try {
+            const content = await this.app.vault.read(file);
+            const links = this.extractLinks(content);
+            
+            // Aggiungi i link se esistono nodi corrispondenti
+            for (const linkTarget of links) {
+                if (this.gravityGraph.hasNode(linkTarget)) {
+                    this.gravityGraph.addLink(noteTitle, linkTarget);
+                }
+            }
+
+            // Aggiorna la cache dei link
+            this.previousLinks.set(file.path, links);
+
+            // Reinizializza la posizione del nuovo nodo
+            this.initializeNewNodePosition(noteTitle);
+
+        } catch (error) {
+            console.error('Errore nella lettura della nuova nota:', error);
+        }
+    }
+
+    private async checkForNewLinks(file: TFile) {
+        if (!this.gravityGraph) return;
+
+        try {
+            const content = await this.app.vault.read(file);
+            const currentLinks = this.extractLinks(content);
+            const previousLinks = this.previousLinks.get(file.path) || [];
+            
+            // Trova i nuovi link
+            const newLinks = currentLinks.filter(link => !previousLinks.includes(link));
+            const removedLinks = previousLinks.filter(link => !currentLinks.includes(link));
+            
+            const noteTitle = file.basename;
+
+            // Aggiungi nuovi link
+            for (const linkTarget of newLinks) {
+                if (this.gravityGraph.hasNode(linkTarget)) {
+                    this.gravityGraph.addLink(noteTitle, linkTarget);
+                    console.log(`Nuovo link aggiunto: ${noteTitle} -> ${linkTarget}`);
+                }
+            }
+
+            // Rimuovi link eliminati
+            for (const linkTarget of removedLinks) {
+                this.gravityGraph.removeLink(noteTitle, linkTarget);
+                console.log(`Link rimosso: ${noteTitle} -> ${linkTarget}`);
+            }
+            
+            // Aggiorna la cache
+            this.previousLinks.set(file.path, currentLinks);
+
+        } catch (error) {
+            console.error('Errore nel controllo dei link:', error);
+        }
+    }
+
+    private onNoteDeleted(file: TFile) {
+        if (!this.gravityGraph) return;
+
+        const noteTitle = file.basename;
+        console.log('Nota eliminata:', noteTitle);
+
+        // Rimuovi il nodo dal grafo
+        this.gravityGraph.removeNode(noteTitle);
+
+        // Rimuovi dalla cache
+        this.previousLinks.delete(file.path);
+    }
+
+    private onNoteRenamed(file: TFile, oldPath: string) {
+        if (!this.gravityGraph) return;
+
+        const oldTitle = oldPath.split('/').pop()?.replace('.md', '') || '';
+        const newTitle = file.basename;
+
+        console.log(`Nota rinominata: ${oldTitle} -> ${newTitle}`);
+
+        // Rinomina il nodo nel grafo
+        this.gravityGraph.renameNode(oldTitle, newTitle, file.path);
+
+        // Aggiorna la cache
+        const links = this.previousLinks.get(oldPath);
+        if (links) {
+            this.previousLinks.delete(oldPath);
+            this.previousLinks.set(file.path, links);
+        }
+    }
+
+    private extractLinks(content: string): string[] {
+        // Regex per link interni [[...]] 
+        const wikiLinkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+        const links: string[] = [];
+        let match;
+        
+        while ((match = wikiLinkRegex.exec(content)) !== null) {
+            let linkTarget = match[1];
+            
+            // Rimuovi l'estensione .md se presente
+            if (linkTarget.endsWith('.md')) {
+                linkTarget = linkTarget.slice(0, -3);
+            }
+            
+            // Prendi solo il nome del file se è un percorso completo
+            if (linkTarget.includes('/')) {
+                linkTarget = linkTarget.split('/').pop() || linkTarget;
+            }
+            
+            links.push(linkTarget);
+        }
+        
+        return links;
+    }
+
+    private initializeNewNodePosition(nodeTitle: string) {
+        if (!this.gravityGraph) return;
+
+        const node = this.gravityGraph.getNode(nodeTitle);
+        if (!node) return;
+
+        // Posiziona il nuovo nodo in una posizione casuale ma non troppo lontana
+        const spread = 4;
+        const x = (Math.random() - 0.5) * spread;
+        const z = (Math.random() - 0.5) * spread;
+        const y = (Math.random() - 0.5) * spread * 0.3;
+        
+        node.position.set(x, y, z);
+
+        // Inizializza velocità e forza
+        (node as any).velocity = new THREE.Vector3(0, 0, 0);
+        (node as any).force = new THREE.Vector3(0, 0, 0);
+    }
+
+    private async initializeLinkCache() {
+        console.log('Inizializzazione cache dei link...');
+        const markdownFiles = this.app.vault.getMarkdownFiles();
+        
+        for (const file of markdownFiles) {
+            try {
+                const content = await this.app.vault.read(file);
+                const links = this.extractLinks(content);
+                this.previousLinks.set(file.path, links);
+            } catch (error) {
+                console.error(`Errore nella lettura del file ${file.path}:`, error);
+            }
+        }
+        
+        console.log(`Cache inizializzata per ${markdownFiles.length} file`);
+    }
+
+    // Metodo pubblico per inizializzare tutto dopo che il grafo è pronto
+    async initializeGraph(gravityGraph: GravityGraph) {
+        this.gravityGraph = gravityGraph;
+        await this.initializeLinkCache();
+        console.log('GraphView pronto per aggiornamenti live');
+    }
 
 	async onClose() {
 
@@ -1675,6 +1887,100 @@ class GravityGraph {
             if (nodeObj === node) return title;
         }
         return '';
+    }
+
+    //Live updates methods
+    // Controlla se un nodo esiste
+    hasNode(title: string): boolean {
+        return this.nodes.has(title);
+    }
+
+    // Ottieni un nodo per titolo
+    getNode(title: string): THREE.Object3D | undefined {
+        return this.nodes.get(title);
+    }
+
+    // Rimuovi un nodo e tutti i suoi link
+    removeNode(title: string): void {
+        const node = this.nodes.get(title);
+        if (!node) return;
+
+        // Rimuovi tutti i link collegati a questo nodo
+        this.links = this.links.filter(link => {
+            const shouldRemove = link.from === node || link.to === node;
+            if (shouldRemove) {
+                this.scene.remove(link.line);
+            }
+            return !shouldRemove;
+        });
+
+        // Rimuovi il nodo dalla scena
+        this.scene.remove(node);
+        this.nodes.delete(title);
+
+        // Rimuovi i dati di pulsazione colore
+        this.colorPulseData.delete(title);
+
+        // Rimuovi il percorso del file
+        this.nodeFilePaths.delete(title);
+
+        // Rimuovi la label
+        this.removeLabelForNode(title);
+
+        console.log(`Nodo rimosso: ${title}`);
+    }
+
+    // Rimuovi un link specifico
+    removeLink(fromTitle: string, toTitle: string): void {
+        const fromNode = this.nodes.get(fromTitle);
+        const toNode = this.nodes.get(toTitle);
+        
+        if (!fromNode || !toNode) return;
+
+        // Trova e rimuovi il link
+        const linkIndex = this.links.findIndex(link => 
+            (link.from === fromNode && link.to === toNode) ||
+            (link.from === toNode && link.to === fromNode)
+        );
+
+        if (linkIndex !== -1) {
+            const link = this.links[linkIndex];
+            this.scene.remove(link.line);
+            this.links.splice(linkIndex, 1);
+            console.log(`Link rimosso: ${fromTitle} <-> ${toTitle}`);
+        }
+    }
+
+    // Rinomina un nodo
+    renameNode(oldTitle: string, newTitle: string, newFilePath?: string): void {
+        const node = this.nodes.get(oldTitle);
+        if (!node) return;
+
+        // Aggiorna il titolo della nota nell'userData
+        node.userData.noteTitle = newTitle;
+
+        // Sposta il nodo nella mappa
+        this.nodes.delete(oldTitle);
+        this.nodes.set(newTitle, node);
+
+        // Aggiorna i dati di pulsazione colore
+        const pulseData = this.colorPulseData.get(oldTitle);
+        if (pulseData) {
+            this.colorPulseData.delete(oldTitle);
+            this.colorPulseData.set(newTitle, pulseData);
+        }
+
+        // Aggiorna il percorso del file
+        this.nodeFilePaths.delete(oldTitle);
+        if (newFilePath) {
+            this.nodeFilePaths.set(newTitle, newFilePath);
+        }
+
+        // Aggiorna la label
+        this.removeLabelForNode(oldTitle);
+        // La nuova label verrà creata automaticamente nel prossimo update
+
+        console.log(`Nodo rinominato: ${oldTitle} -> ${newTitle}`);
     }
 }
 
