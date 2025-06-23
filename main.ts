@@ -681,6 +681,7 @@ class GraphView extends ItemView {
 	gravityGraph: GravityGraph;
 	focusing: boolean = false;
 	focusedNode: THREE.Object3D;
+    private focusHalos: THREE.Mesh[] | null = null;
 	activeLeafChangeHandler: () => void;
     resizeObserver: ResizeObserver;
     wheelAnimationId: number | null = null;
@@ -834,28 +835,14 @@ class GraphView extends ItemView {
             //Apply stored settings
             this.plugin.updateSettingsParameters();
 
-            /*
-            // Applying settings
-            if (this.plugin && this.plugin.settings && this.plugin.settings.forces) {
-                this.gravityGraph.forces = {
-                    gravity: this.plugin.settings.forces.gravity,
-                    repulsion: this.plugin.settings.forces.repulsion,
-                    damping: this.plugin.settings.forces.damping,
-                    centerAttraction: this.plugin.settings.forces.centerAttraction,
-                    linkStrength: this.plugin.settings.forces.linkStrength
-                };
-            }
-            // Apply initial labels max distance setting
-            if (this.plugin?.settings?.maxVisibleDistance !== undefined) {
-                this.gravityGraph.maxVisibleDistance = this.plugin.settings.maxVisibleDistance;
-            }
-            */
-
 			// Listen for active leaf changes, used for auto node focusing
 			this.activeLeafChangeHandler = () => {
 				const activeNoteName = this.getCurrentActiveNote();
-				if (activeNoteName && this.plugin.settings.autoFocus) {
+				if (activeNoteName) {
+                    this.setFocusedNodeByName(activeNoteName);
+                    if (this.plugin.settings.autoFocus) {
 					this.focusOnNodeByName(activeNoteName);
+                    }
 				}
 			};
 			this.app.workspace.on('active-leaf-change', this.activeLeafChangeHandler);
@@ -909,6 +896,7 @@ class GraphView extends ItemView {
                 const deltaTime = (currentTime - lastTime) / 1000;
                 lastTime = currentTime;
                 
+                this.glowFocusedNode();
                 this.gravityGraph.updateParticles(deltaTime);
                 this.composer.render(); // Single render call
                 
@@ -1048,7 +1036,7 @@ class GraphView extends ItemView {
         this.controls.enabled = false;
         this.controls.autoRotate = false;
         
-        const distance = 5;
+        const distance = 6;
         const rotationSpeed = 0.002;
         let angle = 0;
         
@@ -1062,7 +1050,6 @@ class GraphView extends ItemView {
         // Calculate target position for flying animation
         const currentTargetPos = targetNode.position.clone();
         const desiredDirection = startPos.clone().sub(currentTargetPos).normalize();
-        const desiredCameraPos = currentTargetPos.clone().add(desiredDirection.clone().multiplyScalar(distance));
         
         // Calculate initial angle for rotation phase
         angle = Math.atan2(desiredDirection.z, desiredDirection.x);
@@ -1124,6 +1111,15 @@ class GraphView extends ItemView {
 		return null;
 	}
 
+    // New method to set focused node for halo effect
+    setFocusedNodeByName(noteName: string): void {
+            const targetNode = Array.from(this.gravityGraph.nodes.values())
+        .find(node => node.userData.noteTitle === noteName);
+        if (targetNode) {
+            this.focusedNode = targetNode;
+        }
+    }
+
 	focusOnNodeByName(noteName: string): void {
 		const targetNode = Array.from(this.gravityGraph.nodes.values())
 			.find(node => node.userData.noteTitle === noteName);
@@ -1132,6 +1128,88 @@ class GraphView extends ItemView {
 			this.focusOnNode(targetNode);
 		}
 	}
+
+
+    glowFocusedNode(): void {
+        if (this.focusedNode) {
+            // Create halos if they don't exist
+            if (!this.focusHalos) {
+                this.focusHalos = [];
+                const numHalos = 3; // Number of halos
+                const softGray = 0x888888; // Soft gray color
+                
+                for (let i = 0; i < numHalos; i++) {
+                    // Create smaller halos with varying sizes
+                    const innerRadius = 0.8 + i * 0.2; // 0.8, 1.0, 1.2
+                    const outerRadius = innerRadius + 0.15; // Thin rings
+                    
+                    const haloGeometry = new THREE.RingGeometry(innerRadius, outerRadius, 64);
+                    const haloMaterial = new THREE.MeshBasicMaterial({
+                        color: softGray,
+                        transparent: true,
+                        opacity: 0.4 - i * 0.1, // Decreasing opacity for outer halos
+                        side: THREE.DoubleSide
+                    });
+                    
+                    const halo = new THREE.Mesh(haloGeometry, haloMaterial);
+                    
+                    // Set different initial rotations and rotation speeds
+                    halo.userData = {
+                        rotationSpeedY: 0.02 + i * 0.015, // Different Y rotation speeds
+                        rotationSpeedX: 0.01 + i * 0.01,  // Different X rotation speeds
+                        rotationSpeedZ: 0.005 + i * 0.008, // Different Z rotation speeds
+                        initialRotationY: (i * Math.PI * 2) / numHalos, // Spread initial rotations
+                        initialRotationX: (i * Math.PI) / numHalos,
+                        initialRotationZ: (i * Math.PI * 1.5) / numHalos
+                    };
+                    
+                    // Set initial rotations
+                    halo.rotation.y = halo.userData.initialRotationY;
+                    halo.rotation.x = halo.userData.initialRotationX;
+                    halo.rotation.z = halo.userData.initialRotationZ;
+                    
+                    this.focusHalos.push(halo);
+                    this.scene.add(halo);
+                }
+            }
+            
+            // Update all halos
+            this.focusHalos.forEach((halo) => {
+                // Position halo at focused node
+                halo.position.copy(this.focusedNode.position);
+
+                // Calculate distance from camera to focused node
+                const distance = this.camera.position.distanceTo(this.focusedNode.position);
+                
+                // Scale halo based on camera distance
+                const minScale = 0.5;     // Minimum scale when very close
+                const maxScale = 10.0;     // Maximum scale when far away
+                const scaleDistance = 200; // Distance at which scale reaches maximum
+                
+                // Linear scaling
+                const normalizedDistance = Math.min(distance / scaleDistance, 1.0);
+                const scale = minScale + (maxScale - minScale) * normalizedDistance;
+                
+                halo.scale.setScalar(scale);
+
+                // Animate each halo with its own rotation speeds
+                halo.rotation.y += halo.userData.rotationSpeedY;
+                halo.rotation.x += halo.userData.rotationSpeedX;
+                halo.rotation.z += halo.userData.rotationSpeedZ;
+            });
+            
+        } else {
+            // Remove halos when not focusing
+            if (this.focusHalos) {
+                this.focusHalos.forEach((halo) => {
+                    this.scene.remove(halo);
+                    halo.geometry.dispose();
+                    (halo.material as THREE.Material).dispose();
+                });
+                this.focusHalos = null;
+            }
+        }
+    }
 
     private setupLiveUpdates() {
         // Listener per nuove note
@@ -1794,16 +1872,18 @@ class GravityGraph {
             }
 
             // 3. UPDATE NODE SCALES (from updateNodeScales logic)
+
             const connectionCount = nodeConnectionCounts.get(title) || 0;
-            const scale = this.baseNodeScale + (connectionCount * this.linkScaleMultiplier);
+            const scale = this.calcLinkScale(connectionCount)
             node.scale.set(scale, scale, scale);
+
 
             // 4. UPDATE LABELS (from updateLabels logic)
             if (camera && rect) {
                 // Calculate distance and visibility
                 const distanceToCamera = camera.position.distanceTo(node.position);
                 const nodePosition = node.position.clone();
-                nodePosition.y += node.scale.x * 0.6 + 0.3;
+                //nodePosition.y += node.scale.x * 0.5 + 0.1;
                 const screenPosition = nodePosition.clone().project(camera);
                 
                 const shouldBeVisible = distanceToCamera <= this.maxVisibleDistance && screenPosition.z < 1;
@@ -1900,6 +1980,15 @@ class GravityGraph {
             if (nodeObj === node) return title;
         }
         return '';
+    }
+
+    calcLinkScale(connectionCount: number): number {
+        if (connectionCount <= 1) {
+            return 1
+        }
+        else {
+            return this.baseNodeScale + (connectionCount * this.linkScaleMultiplier);
+        }
     }
 
     //Live updates methods
