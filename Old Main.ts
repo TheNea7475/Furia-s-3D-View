@@ -696,11 +696,6 @@ class GraphView extends ItemView {
     linkAddDelay: number = 5;
     labelContainer: HTMLElement;
     private previousLinks = new Map<string, string[]>();
-    
-    // NEW: Add mapping to handle duplicate names
-    private pathToUniqueId = new Map<string, string>();
-    private uniqueIdToPath = new Map<string, string>();
-    private nodeNameCounter = new Map<string, number>();
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -716,53 +711,6 @@ class GraphView extends ItemView {
 
     getIcon(): string {
         return "globe";
-    }
-
-    // NEW: Generate unique ID for nodes with duplicate names
-    private generateUniqueNodeId(basename: string, path: string): string {
-        // Check if this exact path already has an ID
-        if (this.pathToUniqueId.has(path)) {
-            return this.pathToUniqueId.get(path)!;
-        }
-
-        // Count how many nodes with this basename we've seen
-        const count = this.nodeNameCounter.get(basename) || 0;
-        this.nodeNameCounter.set(basename, count + 1);
-        
-        let uniqueId: string;
-        if (count === 0) {
-            // First occurrence, use the basename as-is
-            uniqueId = basename;
-        } else {
-            // Subsequent occurrences, append a counter or use folder name
-            const folderName = path.split('/').slice(-2, -1)[0] || 'root';
-            uniqueId = `${basename} (${folderName})`;
-            
-            // If this ID already exists, add a number
-            let counter = 1;
-            let testId = uniqueId;
-            while (this.uniqueIdToPath.has(testId)) {
-                testId = `${uniqueId} ${counter}`;
-                counter++;
-            }
-            uniqueId = testId;
-        }
-
-        // Store the mappings
-        this.pathToUniqueId.set(path, uniqueId);
-        this.uniqueIdToPath.set(uniqueId, path);
-        
-        return uniqueId;
-    }
-
-    // NEW: Get unique ID from path
-    private getUniqueIdFromPath(path: string): string | null {
-        return this.pathToUniqueId.get(path) || null;
-    }
-
-    // NEW: Get path from unique ID
-    private getPathFromUniqueId(uniqueId: string): string | null {
-        return this.uniqueIdToPath.get(uniqueId) || null;
     }
 
 	async onOpen() {
@@ -800,28 +748,28 @@ class GraphView extends ItemView {
 		const files = vault.getMarkdownFiles();
 		const links: Array<[string, string]> = [];
 
-		// MODIFIED: Collect all links using unique IDs
+		// Collect all links
 		for (const file of files) {
 			const path = file.path;
 			const basename = file.basename;
-            const uniqueId = this.generateUniqueNodeId(basename, path);
-            
 			// Get links from frontmatter and wikilinks
 			const resolvedLinks = metadataCache.resolvedLinks[path];
 			if (resolvedLinks) {
 				for (const target in resolvedLinks) {
 					const targetFile = this.app.metadataCache.getFirstLinkpathDest(target, path);
 					if (targetFile) {
-                        const targetUniqueId = this.generateUniqueNodeId(targetFile.basename, targetFile.path);
-						links.push([uniqueId, targetUniqueId]);
+						links.push([basename, targetFile.basename]);
 					}
 				}
 			}
 		}
 
+
         // Store files and links for gradual addition
         this.allFiles = files;
         this.allLinks = links;
+
+
 
 		// Simulating then rendering - Delayed so layout has time to stabilize
 		setTimeout(() => {
@@ -835,6 +783,7 @@ class GraphView extends ItemView {
             this.renderer.toneMappingExposure = 1;
             this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
+
 			this.scene = new THREE.Scene();
 			this.camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
 			this.camera.position.z = 15; // Move camera back to see the whole graph
@@ -842,6 +791,7 @@ class GraphView extends ItemView {
             // Ambient light
 			const ambientLight = new THREE.AmbientLight(0xffffff, 2); // Strong white light
 			this.scene.add(ambientLight);
+
 
             // Composer with multiple pass
             const renderScene = new RenderPass(this.scene, this.camera);
@@ -888,23 +838,21 @@ class GraphView extends ItemView {
 			// Listen for active leaf changes, used for auto node focusing
 			this.activeLeafChangeHandler = () => {
 				const activeNoteName = this.getCurrentActiveNote();
-                const activeNotePath = this.getCurrentActiveNotePath();
-				if (activeNoteName && activeNotePath) {
-                    const uniqueId = this.getUniqueIdFromPath(activeNotePath);
-                    if (uniqueId) {
-                        this.setFocusedNodeByUniqueId(uniqueId);
-                        if (this.plugin.settings.autoFocus) {
-                            this.focusOnNodeByUniqueId(uniqueId);
-                        }
+				if (activeNoteName) {
+                    this.setFocusedNodeByName(activeNoteName);
+                    if (this.plugin.settings.autoFocus) {
+					this.focusOnNodeByName(activeNoteName);
                     }
 				}
 			};
 			this.app.workspace.on('active-leaf-change', this.activeLeafChangeHandler);
 
             // Start adding nodes gradually after a short delay.
+            
             setTimeout(() => {
                 this.startNodeAddition();
             }, 500);
+            
 
 			// Initialize positions and start physics simulation
 			this.gravityGraph.initializePositions();
@@ -934,6 +882,7 @@ class GraphView extends ItemView {
 				}
 			});
 
+
 			// Main animation loop
 			let lastTime = performance.now();
             const animate = () => {
@@ -955,11 +904,13 @@ class GraphView extends ItemView {
             };
 			animate();
 
+
 			// Event listeners
 
             // Listener for zoom-to-move logic. instead of zooming move in 3d
             this.renderer.domElement.addEventListener('wheel', this.handleWheelMovement);
 
+            
             // Use ResizeObserver to detect container size changes (panel collapse/expand)
             this.resizeObserver = new ResizeObserver(() => {
                     this.handleResize();
@@ -968,24 +919,24 @@ class GraphView extends ItemView {
 
             this.resizeObserver.observe(container);
 
+
 		}, 100); //scene rendering delay
     
         // Setting up listeners
+
         this.setupLiveUpdates();
 	}
 
-    // MODIFIED: Graph used methods with unique IDs
+    // Graph used methods
+
     startNodeAddition = () => {
         const addNextNode = () => {
             if (this.currentNodeIndex < this.allFiles.length) {
                 const file = this.allFiles[this.currentNodeIndex];
-                const uniqueId = this.generateUniqueNodeId(file.basename, file.path);
-                
-                // Store the original basename in userData for display
-                this.gravityGraph.addNode(uniqueId, file.path, file.basename);
+                this.gravityGraph.addNode(file.basename, file.path);
                 
                 // Get the newly added node and give it a random position
-                const newNode = this.gravityGraph.nodes.get(uniqueId);
+                const newNode = this.gravityGraph.nodes.get(file.basename);
                 if (newNode) {
                     // Random position in a sphere around origin
                     const spread = 8; // Same as initializePositions spread
@@ -994,11 +945,6 @@ class GraphView extends ItemView {
                     const y = (Math.random() - 0.5) * spread * 0.3;
                     
                     newNode.position.set(x, y, z);
-                    
-                    // Store the display name in userData
-                    newNode.userData.noteTitle = file.basename;
-                    newNode.userData.uniqueId = uniqueId;
-                    newNode.userData.filePath = file.path;
                     
                     // Give it some initial velocity for more dynamic appearance
                     if ((newNode as any).velocity) {
@@ -1025,8 +971,8 @@ class GraphView extends ItemView {
     startLinkAddition = () => {
         const addNextLink = () => {
             if (this.currentLinkIndex < this.allLinks.length) {
-                const [fromUniqueId, toUniqueId] = this.allLinks[this.currentLinkIndex];
-                this.gravityGraph.addLink(fromUniqueId, toUniqueId);
+                const [from, to] = this.allLinks[this.currentLinkIndex];
+                this.gravityGraph.addLink(from, to);
                 this.currentLinkIndex++;
                 
                 this.nodeAdditionTimer = setTimeout(addNextLink, this.linkAddDelay) as unknown as number;
@@ -1080,12 +1026,11 @@ class GraphView extends ItemView {
         this.composer.setPixelRatio(window.devicePixelRatio);
         this.composer.setSize(container.offsetWidth,container.offsetHeight);
         }, 10);
+
 	};
 
     focusOnNode(targetNode: THREE.Object3D): void {
-        // Use the display name for the notice
-        const displayName = targetNode.userData.noteTitle || targetNode.userData.uniqueId;
-        new Notice(displayName);
+        new Notice(targetNode.userData.noteTitle);
 
         // Disable standard controls
         this.controls.enabled = false;
@@ -1149,6 +1094,7 @@ class GraphView extends ItemView {
                 angle += rotationSpeed;
             }
             
+            //this.renderer.render(this.scene, this.camera);
             this.composer.render()
             requestAnimationFrame(animate);
         };
@@ -1165,51 +1111,24 @@ class GraphView extends ItemView {
 		return null;
 	}
 
-    // NEW: Get current active note path
-    getCurrentActiveNotePath(): string | null {
-        const activeLeaf = this.app.workspace.activeLeaf;
-        if (activeLeaf?.view.getViewType() === 'markdown') {
-            const markdownView = activeLeaf.view as any;
-            return markdownView.file?.path || null;
-        }
-        return null;
-    }
-
-    // MODIFIED: Set focused node by unique ID instead of name
-    setFocusedNodeByUniqueId(uniqueId: string): void {
-        const targetNode = this.gravityGraph.nodes.get(uniqueId);
+    // New method to set focused node for halo effect
+    setFocusedNodeByName(noteName: string): void {
+            const targetNode = Array.from(this.gravityGraph.nodes.values())
+        .find(node => node.userData.noteTitle === noteName);
         if (targetNode) {
             this.focusedNode = targetNode;
         }
     }
 
-    // MODIFIED: Focus on node by unique ID instead of name
-	focusOnNodeByUniqueId(uniqueId: string): void {
-		const targetNode = this.gravityGraph.nodes.get(uniqueId);
+	focusOnNodeByName(noteName: string): void {
+		const targetNode = Array.from(this.gravityGraph.nodes.values())
+			.find(node => node.userData.noteTitle === noteName);
+		
 		if (targetNode) {
 			this.focusOnNode(targetNode);
 		}
 	}
 
-    // Keep the old methods for backward compatibility, but use path-based lookup
-    setFocusedNodeByName(noteName: string): void {
-        // Try to find by note name, but this may not work correctly with duplicates
-        const targetNode = Array.from(this.gravityGraph.nodes.values())
-            .find(node => node.userData.noteTitle === noteName);
-        if (targetNode) {
-            this.focusedNode = targetNode;
-        }
-    }
-
-    focusOnNodeByName(noteName: string): void {
-        // Try to find by note name, but this may not work correctly with duplicates
-        const targetNode = Array.from(this.gravityGraph.nodes.values())
-            .find(node => node.userData.noteTitle === noteName);
-        
-        if (targetNode) {
-            this.focusOnNode(targetNode);
-        }
-    }
 
     glowFocusedNode(): void {
         if (this.focusedNode) {
@@ -1333,23 +1252,15 @@ class GraphView extends ItemView {
         this.initializeLinkCache();
     }
 
-    // MODIFIED: Live updates methods with unique IDs
+    //Live updates methods to call stuff in gravityGraph
     private async onNewNoteCreated(file: TFile) {
         if (!this.gravityGraph) return;
 
-        const uniqueId = this.generateUniqueNodeId(file.basename, file.path);
-        console.log('Nuova nota creata:', uniqueId, 'path:', file.path);
+        const noteTitle = file.basename;
+        console.log('Nuova nota creata:', noteTitle);
 
-        // Aggiungi il nodo al grafo con unique ID
-        this.gravityGraph.addNode(uniqueId, file.path, file.basename);
-
-        // Set userData properly
-        const node = this.gravityGraph.nodes.get(uniqueId);
-        if (node) {
-            node.userData.noteTitle = file.basename;
-            node.userData.uniqueId = uniqueId;
-            node.userData.filePath = file.path;
-        }
+        // Aggiungi il nodo al grafo
+        this.gravityGraph.addNode(noteTitle, file.path);
 
         // Leggi il contenuto per eventuali link esistenti
         try {
@@ -1358,13 +1269,8 @@ class GraphView extends ItemView {
             
             // Aggiungi i link se esistono nodi corrispondenti
             for (const linkTarget of links) {
-                // Find the target node by trying to resolve the link
-                const targetFile = this.app.metadataCache.getFirstLinkpathDest(linkTarget, file.path);
-                if (targetFile) {
-                    const targetUniqueId = this.getUniqueIdFromPath(targetFile.path);
-                    if (targetUniqueId && this.gravityGraph.hasNode(targetUniqueId)) {
-                        this.gravityGraph.addLink(uniqueId, targetUniqueId);
-                    }
+                if (this.gravityGraph.hasNode(linkTarget)) {
+                    this.gravityGraph.addLink(noteTitle, linkTarget);
                 }
             }
 
@@ -1372,7 +1278,7 @@ class GraphView extends ItemView {
             this.previousLinks.set(file.path, links);
 
             // Reinizializza la posizione del nuovo nodo
-            this.initializeNewNodePosition(uniqueId);
+            this.initializeNewNodePosition(noteTitle);
 
         } catch (error) {
             console.error('Errore nella lettura della nuova nota:', error);
@@ -1391,31 +1297,20 @@ class GraphView extends ItemView {
             const newLinks = currentLinks.filter(link => !previousLinks.includes(link));
             const removedLinks = previousLinks.filter(link => !currentLinks.includes(link));
             
-            const uniqueId = this.getUniqueIdFromPath(file.path);
-            if (!uniqueId) return;
+            const noteTitle = file.basename;
 
             // Aggiungi nuovi link
             for (const linkTarget of newLinks) {
-                const targetFile = this.app.metadataCache.getFirstLinkpathDest(linkTarget, file.path);
-                if (targetFile) {
-                    const targetUniqueId = this.getUniqueIdFromPath(targetFile.path);
-                    if (targetUniqueId && this.gravityGraph.hasNode(targetUniqueId)) {
-                        this.gravityGraph.addLink(uniqueId, targetUniqueId);
-                        console.log(`Nuovo link aggiunto: ${uniqueId} -> ${targetUniqueId}`);
-                    }
+                if (this.gravityGraph.hasNode(linkTarget)) {
+                    this.gravityGraph.addLink(noteTitle, linkTarget);
+                    console.log(`Nuovo link aggiunto: ${noteTitle} -> ${linkTarget}`);
                 }
             }
 
             // Rimuovi link eliminati
             for (const linkTarget of removedLinks) {
-                const targetFile = this.app.metadataCache.getFirstLinkpathDest(linkTarget, file.path);
-                if (targetFile) {
-                    const targetUniqueId = this.getUniqueIdFromPath(targetFile.path);
-                    if (targetUniqueId) {
-                        this.gravityGraph.removeLink(uniqueId, targetUniqueId);
-                        console.log(`Link rimosso: ${uniqueId} -> ${targetUniqueId}`);
-                    }
-                }
+                this.gravityGraph.removeLink(noteTitle, linkTarget);
+                console.log(`Link rimosso: ${noteTitle} -> ${linkTarget}`);
             }
             
             // Aggiorna la cache
@@ -1429,58 +1324,26 @@ class GraphView extends ItemView {
     private onNoteDeleted(file: TFile) {
         if (!this.gravityGraph) return;
 
-        const uniqueId = this.getUniqueIdFromPath(file.path);
-        if (!uniqueId) return;
-
-        console.log('Nota eliminata:', uniqueId);
+        const noteTitle = file.basename;
+        console.log('Nota eliminata:', noteTitle);
 
         // Rimuovi il nodo dal grafo
-        this.gravityGraph.removeNode(uniqueId);
+        this.gravityGraph.removeNode(noteTitle);
 
         // Rimuovi dalla cache
         this.previousLinks.delete(file.path);
-        
-        // Clean up mappings
-        this.pathToUniqueId.delete(file.path);
-        this.uniqueIdToPath.delete(uniqueId);
-        
-        // Update name counter
-        const basename = file.basename;
-        const count = this.nodeNameCounter.get(basename) || 0;
-        if (count > 1) {
-            this.nodeNameCounter.set(basename, count - 1);
-        } else {
-            this.nodeNameCounter.delete(basename);
-        }
     }
 
     private onNoteRenamed(file: TFile, oldPath: string) {
         if (!this.gravityGraph) return;
 
-        const oldUniqueId = this.getUniqueIdFromPath(oldPath);
-        if (!oldUniqueId) return;
+        const oldTitle = oldPath.split('/').pop()?.replace('.md', '') || '';
+        const newTitle = file.basename;
 
-        // Generate new unique ID for the renamed file
-        const newUniqueId = this.generateUniqueNodeId(file.basename, file.path);
-
-        console.log(`Nota rinominata: ${oldUniqueId} -> ${newUniqueId}`);
+        console.log(`Nota rinominata: ${oldTitle} -> ${newTitle}`);
 
         // Rinomina il nodo nel grafo
-        this.gravityGraph.renameNode(oldUniqueId, newUniqueId, file.path);
-
-        // Update mappings
-        this.pathToUniqueId.delete(oldPath);
-        this.uniqueIdToPath.delete(oldUniqueId);
-        this.pathToUniqueId.set(file.path, newUniqueId);
-        this.uniqueIdToPath.set(newUniqueId, file.path);
-
-        // Update node userData
-        const node = this.gravityGraph.nodes.get(newUniqueId);
-        if (node) {
-            node.userData.noteTitle = file.basename;
-            node.userData.uniqueId = newUniqueId;
-            node.userData.filePath = file.path;
-        }
+        this.gravityGraph.renameNode(oldTitle, newTitle, file.path);
 
         // Aggiorna la cache
         const links = this.previousLinks.get(oldPath);
@@ -1515,10 +1378,10 @@ class GraphView extends ItemView {
         return links;
     }
 
-    private initializeNewNodePosition(uniqueId: string) {
+    private initializeNewNodePosition(nodeTitle: string) {
         if (!this.gravityGraph) return;
 
-        const node = this.gravityGraph.getNode(uniqueId);
+        const node = this.gravityGraph.getNode(nodeTitle);
         if (!node) return;
 
         // Posiziona il nuovo nodo in una posizione casuale ma non troppo lontana
@@ -1556,31 +1419,6 @@ class GraphView extends ItemView {
         this.gravityGraph = gravityGraph;
         await this.initializeLinkCache();
         console.log('GraphView pronto per aggiornamenti live');
-    }
-
-    // NEW: Method to get all nodes with duplicate names for debugging
-    getNodeDuplicateInfo(): {[basename: string]: {uniqueId: string, path: string}[]} {
-        const duplicateInfo: {[basename: string]: {uniqueId: string, path: string}[]} = {};
-        
-        for (const [path, uniqueId] of this.pathToUniqueId.entries()) {
-            const basename = path.split('/').pop()?.replace('.md', '') || '';
-            
-            if (!duplicateInfo[basename]) {
-                duplicateInfo[basename] = [];
-            }
-            
-            duplicateInfo[basename].push({ uniqueId, path });
-        }
-        
-        // Only return entries with more than one instance
-        const result: {[basename: string]: {uniqueId: string, path: string}[]} = {};
-        for (const [basename, instances] of Object.entries(duplicateInfo)) {
-            if (instances.length > 1) {
-                result[basename] = instances;
-            }
-        }
-        
-        return result;
     }
 
 	async onClose() {
@@ -1647,11 +1485,6 @@ class GraphView extends ItemView {
         //DOM cleanup
 		this.contentEl.empty();
 
-        // Clean up mappings
-        this.pathToUniqueId.clear();
-        this.uniqueIdToPath.clear();
-        this.nodeNameCounter.clear();
-        this.previousLinks.clear();
 	}
 }
 
@@ -1712,17 +1545,16 @@ class GravityGraph {
 
     // Utility methods for label management
 
-    createLabel(text: string, uniqueId: string): HTMLElement {
+    createLabel(text: string): HTMLElement {
         const label = document.createElement('div');
         label.className = 'graph-label';
         label.textContent = text;
-        label.setAttribute('data-unique-id', uniqueId); // Store unique ID for reference
         this.labelContainer.appendChild(label);
         return label;
     }
 
-    updateLabelText(uniqueId: string, newText: string): void {
-        const label = this.labels.get(uniqueId);
+    updateLabelText(nodeTitle: string, newText: string): void {
+        const label = this.labels.get(nodeTitle);
         if (label) {
             label.textContent = newText;
         }
@@ -1738,52 +1570,44 @@ class GravityGraph {
         }
     }
 
-    removeLabelForNode(uniqueId: string): void {
-        const label = this.labels.get(uniqueId);
+    removeLabelForNode(nodeTitle: string): void {
+        const label = this.labels.get(nodeTitle);
         if (label) {
             this.labelContainer.removeChild(label);
-            this.labels.delete(uniqueId);
+            this.labels.delete(nodeTitle);
         }
     }
 
-    addNode(uniqueId: string, filePath?: string, displayName?: string): void {
-        // Use displayName for visual purposes, uniqueId for internal tracking
-        const nodeTitle = displayName || uniqueId;
-        
+    addNode(title: string, filePath?: string): void {
         // Create the node mesh
         const geometry = new THREE.SphereGeometry(0.3, 16, 16);
-        if (filePath) {
-            this.nodeFilePaths.set(uniqueId, filePath); // Use unique ID as key
-        }
-        
-        const nodeColor = this.getNodeColor(uniqueId); // Pass unique ID
+        if (filePath) {this.nodeFilePaths.set(title, filePath);}// Store file path for color calculation
+        const nodeColor = this.getNodeColor(title);
         const material = new THREE.MeshStandardMaterial({
-            color: nodeColor,
-            emissive: nodeColor,
+            color: nodeColor, // Use your selected color as base
+            emissive: nodeColor, // Start with node base color emission
             emissiveIntensity: 0.5,
         });
         const mesh = new THREE.Mesh(geometry, material);
-        
-        // Store both unique ID and display name in userData
-        mesh.userData.noteTitle = nodeTitle; // Display name for UI
-        mesh.userData.uniqueId = uniqueId;   // Unique ID for tracking
-        mesh.userData.filePath = filePath;   // File path for reference
+        mesh.userData.noteTitle = title;
 
         // Add physics properties to the mesh
         (mesh as any).velocity = new THREE.Vector3(0, 0, 0);
         (mesh as any).force = new THREE.Vector3(0, 0, 0);
         (mesh as any).mass = 1;
         
-        this.nodes.set(uniqueId, mesh); // Use unique ID as key
+        this.nodes.set(title, mesh);
         this.scene.add(mesh);
         
-        // Initialize color pulse data with unique ID as key
+        // Initialize color pulse data with the correct color
         const baseColor = new THREE.Color(nodeColor);
-        const multiplier = this.calculateBrightnessMultiplier(baseColor);
 
-        this.colorPulseData.set(uniqueId, {
+        //Calculate brighness multiplier with dedicated function
+        const multiplier = this.calculateBrightnessMultiplier(baseColor)
+
+        this.colorPulseData.set(title, {
             phase: Math.random() * Math.PI * 2,
-            speed: 0.5 + Math.random() * 1.5,
+            speed: 0.5 + Math.random() * 1.5,   //Make customizable
             baseColor: new THREE.Color(nodeColor),
             pulseColor: new THREE.Color(nodeColor).multiplyScalar(multiplier),
             emissiveStrenghtMultiplier: multiplier,
@@ -1799,25 +1623,23 @@ class GravityGraph {
         return multiplier
     }
 
-    // MODIFIED: Update getNodeColor to work with unique IDs
-    private getNodeColor(uniqueId: string): number {
-        if (!this.currentSettings) {
+    private getNodeColor(nodeTitle: string): number {
+        if (!this.currentSettings){
             return 0xffffff;
         }
         
-        const filePath = this.nodeFilePaths.get(uniqueId); // Use unique ID
+        const filePath = this.nodeFilePaths.get(nodeTitle);
         if (!filePath) return hexToThreeColor(this.currentSettings.defaultNodeColor);
         
         const colorHex = getNodeColorForFile(filePath, this.currentSettings);
         return hexToThreeColor(colorHex);
     }
 
-    // MODIFIED: Update updateNodeColors to work with unique IDs
     updateNodeColors(settings: PluginSettings): void {
         this.currentSettings = settings;
         
-        for (const [uniqueId, node] of this.nodes) { // uniqueId instead of title
-            const color = this.getNodeColor(uniqueId);
+        for (const [title, node] of this.nodes) {
+            const color = this.getNodeColor(title);
             const threeColor = new THREE.Color(color);
             
             // Update node material - base color AND emissive
@@ -1825,40 +1647,30 @@ class GravityGraph {
                 if (Array.isArray(node.material)) {
                     node.material.forEach(mat => {
                         if ('color' in mat && 'emissive' in mat) {
-                            (mat as any).color.copy(threeColor);
-                            (mat as any).emissive.set(threeColor);
+                            (mat as any).color.copy(threeColor); // Set base color
+                            (mat as any).emissive.set(threeColor); // Reset emissive to black
                         }
                     });
                 } else if ('color' in node.material && 'emissive' in node.material) {
-                    (node.material as any).color.copy(threeColor);
-                    (node.material as any).emissive.set(threeColor);
+                    (node.material as any).color.copy(threeColor); // Set base color
+                    (node.material as any).emissive.set(threeColor); // Reset emissive to black
                 }
             }
-            
             // Update pulse data colors
-            const pulseData = this.colorPulseData.get(uniqueId); // Use unique ID
+            const pulseData = this.colorPulseData.get(title);
             if (pulseData) {
-                const multiplier = this.calculateBrightnessMultiplier(threeColor);
+                const multiplier = this.calculateBrightnessMultiplier(threeColor)
                 pulseData.baseColor.copy(threeColor);
                 pulseData.pulseColor.copy(threeColor).multiplyScalar(multiplier);
-                pulseData.emissiveStrenghtMultiplier = multiplier;
+                pulseData.emissiveStrenghtMultiplier = multiplier
             }
         }
     }
 
-    // MODIFIED: Update addLink to work with unique IDs
-    addLink(fromUniqueId: string, toUniqueId: string): void {
-        const fromMesh = this.nodes.get(fromUniqueId);
-        const toMesh = this.nodes.get(toUniqueId);
+    addLink(from: string, to: string): void {
+        const fromMesh = this.nodes.get(from);
+        const toMesh = this.nodes.get(to);
         if (!fromMesh || !toMesh) return;
-
-        // Check if link already exists to avoid duplicates
-        const linkExists = this.links.some(link => 
-            (link.from === fromMesh && link.to === toMesh) ||
-            (link.from === toMesh && link.to === fromMesh)
-        );
-        
-        if (linkExists) return;
 
         const geometry = new THREE.BufferGeometry().setFromPoints([
             fromMesh.position.clone(),
@@ -1868,16 +1680,19 @@ class GravityGraph {
         const material = new THREE.LineBasicMaterial({
             color: 0x444444,
             transparent: true,
-            opacity: 0.4,
+            opacity: 0.4,          
             depthWrite: false,
-            depthTest: true,
+            depthTest: true,        // Ensure proper rendering
         });
 
         const line = new THREE.Line(geometry, material);
+
+        // Force render even if camera is close by reducing frustum clipping issues
         line.frustumCulled = false;
 
         this.links.push({ from: fromMesh, to: toMesh, line: line });
         this.scene.add(line);
+        
     }
 
     initializePositions(): void {
@@ -1982,23 +1797,24 @@ class GravityGraph {
         }
     }
 
-    // MODIFIED: Update the optimized updateAllNodes method
+    // NEW: Optimized single-loop update method that combines all node operations
     updateAllNodes(camera?: THREE.Camera): void {
-        // Pre-calculate connection counts for scaling using unique IDs
+
+        // Pre-calculate connection counts for scaling
         const nodeConnectionCounts = new Map<string, number>();
         for (const link of this.links) {
-            // Find unique IDs by reverse lookup through userData
-            let fromUniqueId = '';
-            let toUniqueId = '';
+            // Find node titles by reverse lookup
+            let fromTitle = '';
+            let toTitle = '';
             
-            for (const [uniqueId, node] of this.nodes) {
-                if (node === link.from) fromUniqueId = uniqueId;
-                if (node === link.to) toUniqueId = uniqueId;
+            for (const [title, node] of this.nodes) {
+                if (node === link.from) fromTitle = title;
+                if (node === link.to) toTitle = title;
             }
             
-            if (fromUniqueId && toUniqueId) {
-                nodeConnectionCounts.set(fromUniqueId, (nodeConnectionCounts.get(fromUniqueId) || 0) + 1);
-                nodeConnectionCounts.set(toUniqueId, (nodeConnectionCounts.get(toUniqueId) || 0) + 1);
+            if (fromTitle && toTitle) {
+                nodeConnectionCounts.set(fromTitle, (nodeConnectionCounts.get(fromTitle) || 0) + 1);
+                nodeConnectionCounts.set(toTitle, (nodeConnectionCounts.get(toTitle) || 0) + 1);
             }
         }
 
@@ -2007,64 +1823,81 @@ class GravityGraph {
         const canvas = camera ? this.labelContainer.parentElement : null;
         const rect = canvas ? canvas.getBoundingClientRect() : null;
 
-        // SINGLE LOOP: Process all node updates using unique IDs
-        for (const [uniqueId, node] of this.nodes) {
-            // 1. UPDATE POSITIONS
+        // SINGLE LOOP: Process all node updates in one iteration
+        for (const [title, node] of this.nodes) {
+            // 1. UPDATE POSITIONS (from updatePositions logic)
             const velocity = (node as any).velocity as THREE.Vector3;
             const force = (node as any).force as THREE.Vector3;
 
             velocity.add(force);
             velocity.multiplyScalar(this.forces.damping);
 
+            // Clamp tiny movements
             if (velocity.lengthSq() < this.velocityTreshold * this.velocityTreshold) {
                 velocity.set(0, 0, 0);
             }
 
             node.position.add(velocity);
 
-            // 2. UPDATE COLORS
-            const pulseData = this.colorPulseData.get(uniqueId); // Use unique ID
+            // 2. UPDATE COLORS (modified to use folder-based colors)
+            const pulseData = this.colorPulseData.get(title);
             if (pulseData) {
+                // Update phase
                 pulseData.phase += pulseData.speed * 0.016;
+                
+                // Calculate pulse factor (0 to 1)
                 const pulseFactor = (Math.sin(pulseData.phase) + 1) * 0.5;
                 
+                // Interpolate between base color and pulse color
+                
+                //const currentColor = new THREE.Color(); //To make: avoid creating a new obj every frame
+                //currentColor.lerpColors(pulseData.baseColor, pulseData.pulseColor, pulseFactor); //Disabled since color pusling has been disabled
+                
+                // Apply color to node material emissive and emissive intensity
                 if (node instanceof THREE.Mesh && node.material) {
                     if (Array.isArray(node.material)) {
                         node.material.forEach(mat => {
                             if ('emissive' in mat && 'emissiveIntensity' in mat) {
-                                (mat as any).emissiveIntensity = pulseFactor * pulseData.emissiveStrenghtMultiplier;
+                                //(mat as any).color.copy(currentColor); To change base color
+                                //(mat as any).emissive.copy(currentColor); To change pulsing color
+                                (mat as any).emissiveIntensity = pulseFactor * pulseData.emissiveStrenghtMultiplier; // between 0 and 1 multiplied for a factor that makes darker color glow
                             }
                         });
                     } else if ('emissive' in node.material && 'emissiveIntensity' in node.material) {
-                        (node.material as any).emissiveIntensity = pulseFactor * pulseData.emissiveStrenghtMultiplier;
+                        //(node.material as any).color.copy(currentColor); To change base color
+                        //(node.material as any).emissive.copy(currentColor); To change pulsing color
+                        (node.material as any).emissiveIntensity = pulseFactor * pulseData.emissiveStrenghtMultiplier; // between 0 and 1, multiplied by a factor
                     }
                 }
             }
 
-            // 3. UPDATE NODE SCALES
-            const connectionCount = nodeConnectionCounts.get(uniqueId) || 0;
-            const scale = this.calcLinkScale(connectionCount);
+            // 3. UPDATE NODE SCALES (from updateNodeScales logic)
+
+            const connectionCount = nodeConnectionCounts.get(title) || 0;
+            const scale = this.calcLinkScale(connectionCount)
             node.scale.set(scale, scale, scale);
 
-            // 4. UPDATE LABELS - use display name for label text
+
+            // 4. UPDATE LABELS (from updateLabels logic)
             if (camera && rect) {
+                // Calculate distance and visibility
                 const distanceToCamera = camera.position.distanceTo(node.position);
                 const nodePosition = node.position.clone();
+                //nodePosition.y += node.scale.x * 0.5 + 0.1;
                 const screenPosition = nodePosition.clone().project(camera);
                 
                 const shouldBeVisible = distanceToCamera <= this.maxVisibleDistance && screenPosition.z < 1;
                 
                 if (shouldBeVisible) {
-                    visibleLabels.add(uniqueId);
+                    visibleLabels.add(title);
                     
-                    // Create label if it doesn't exist, using display name
-                    if (!this.labels.has(uniqueId)) {
-                        const displayName = node.userData.noteTitle || uniqueId;
-                        const label = this.createLabel(displayName, uniqueId);
-                        this.labels.set(uniqueId, label);
+                    // Create label if it doesn't exist
+                    if (!this.labels.has(title)) {
+                        const label = this.createLabel(title);
+                        this.labels.set(title, label);
                     }
                     
-                    const label = this.labels.get(uniqueId)!;
+                    const label = this.labels.get(title)!;
                     
                     // Project to screen coordinates
                     const x = (screenPosition.x * 0.5 + 0.5) * rect.width;
@@ -2091,17 +1924,17 @@ class GravityGraph {
             }
         }
 
-        // Clean up labels that are no longer visible
+        // Clean up labels that are no longer visible (from updateLabels logic)
         if (camera) {
-            for (const [uniqueId, label] of this.labels) {
-                if (!visibleLabels.has(uniqueId)) {
+            for (const [title, label] of this.labels) {
+                if (!visibleLabels.has(title)) {
                     this.labelContainer.removeChild(label);
-                    this.labels.delete(uniqueId);
+                    this.labels.delete(title);
                 }
             }
         }
 
-        // Update link lines
+        // Update link lines (this still needs to be separate as it operates on links, not nodes)
         for (const link of this.links) {
             const points = [link.from.position, link.to.position];
             link.line.geometry.setFromPoints(points);
@@ -2134,14 +1967,12 @@ class GravityGraph {
         this.forces[type] = value;
     }
 
-    // MODIFIED: Update getNodeConnectionCount to work with unique IDs
-    getNodeConnectionCount(uniqueId: string): number {
-        const node = this.nodes.get(uniqueId);
-        if (!node) return 0;
-        
-        return this.links.filter(link => 
-            link.from === node || link.to === node
-        ).length;
+    getNodeConnectionCount(nodeTitle: string): number {
+        return this.links.filter(link => {
+            const fromTitle = this.getNodeTitle(link.from);
+            const toTitle = this.getNodeTitle(link.to);
+            return fromTitle === nodeTitle || toTitle === nodeTitle;
+        }).length;
     }
 
     private getNodeTitle(node: THREE.Object3D): string {
@@ -2160,68 +1991,55 @@ class GravityGraph {
         }
     }
 
-    // MODIFIED: Update live update methods to work with unique IDs
-    hasNode(uniqueId: string): boolean {
-        return this.nodes.has(uniqueId);
+    //Live updates methods
+    // Controlla se un nodo esiste
+    hasNode(title: string): boolean {
+        return this.nodes.has(title);
     }
 
     // Ottieni un nodo per titolo
-    getNode(uniqueId: string): THREE.Object3D | undefined {
-        return this.nodes.get(uniqueId);
+    getNode(title: string): THREE.Object3D | undefined {
+        return this.nodes.get(title);
     }
 
-    removeNode(uniqueId: string): void {
-        const node = this.nodes.get(uniqueId);
+    // Rimuovi un nodo e tutti i suoi link
+    removeNode(title: string): void {
+        const node = this.nodes.get(title);
         if (!node) return;
 
-        // Remove all links connected to this node
+        // Rimuovi tutti i link collegati a questo nodo
         this.links = this.links.filter(link => {
             const shouldRemove = link.from === node || link.to === node;
             if (shouldRemove) {
                 this.scene.remove(link.line);
-                // Dispose geometry and material
-                link.line.geometry.dispose();
-                if (link.line.material instanceof THREE.Material) {
-                    link.line.material.dispose();
-                }
             }
             return !shouldRemove;
         });
 
-        // Remove the node from scene
+        // Rimuovi il nodo dalla scena
         this.scene.remove(node);
-        
-        // Dispose node geometry and material
-        if (node instanceof THREE.Mesh) {
-            node.geometry.dispose();
-            if (Array.isArray(node.material)) {
-                node.material.forEach(mat => mat.dispose());
-            } else {
-                node.material.dispose();
-            }
-        }
-        
-        this.nodes.delete(uniqueId);
+        this.nodes.delete(title);
 
-        // Remove color pulse data
-        this.colorPulseData.delete(uniqueId);
+        // Rimuovi i dati di pulsazione colore
+        this.colorPulseData.delete(title);
 
-        // Remove file path
-        this.nodeFilePaths.delete(uniqueId);
+        // Rimuovi il percorso del file
+        this.nodeFilePaths.delete(title);
 
-        // Remove label
-        this.removeLabelForNode(uniqueId);
+        // Rimuovi la label
+        this.removeLabelForNode(title);
 
-        console.log(`Node removed: ${uniqueId}`);
+        console.log(`Nodo rimosso: ${title}`);
     }
 
-    removeLink(fromUniqueId: string, toUniqueId: string): void {
-        const fromNode = this.nodes.get(fromUniqueId);
-        const toNode = this.nodes.get(toUniqueId);
+    // Rimuovi un link specifico
+    removeLink(fromTitle: string, toTitle: string): void {
+        const fromNode = this.nodes.get(fromTitle);
+        const toNode = this.nodes.get(toTitle);
         
         if (!fromNode || !toNode) return;
 
-        // Find and remove the link
+        // Trova e rimuovi il link
         const linkIndex = this.links.findIndex(link => 
             (link.from === fromNode && link.to === toNode) ||
             (link.from === toNode && link.to === fromNode)
@@ -2230,54 +2048,43 @@ class GravityGraph {
         if (linkIndex !== -1) {
             const link = this.links[linkIndex];
             this.scene.remove(link.line);
-            
-            // Dispose resources
-            link.line.geometry.dispose();
-            if (link.line.material instanceof THREE.Material) {
-                link.line.material.dispose();
-            }
-            
             this.links.splice(linkIndex, 1);
-            console.log(`Link removed: ${fromUniqueId} <-> ${toUniqueId}`);
+            console.log(`Link rimosso: ${fromTitle} <-> ${toTitle}`);
         }
     }
 
-    renameNode(oldUniqueId: string, newUniqueId: string, newFilePath?: string): void {
-        const node = this.nodes.get(oldUniqueId);
+    // Rinomina un nodo
+    renameNode(oldTitle: string, newTitle: string, newFilePath?: string): void {
+        const node = this.nodes.get(oldTitle);
         if (!node) return;
 
-        // Update node userData - keep display name unchanged unless explicitly provided
-        node.userData.uniqueId = newUniqueId;
-        if (newFilePath) {
-            node.userData.filePath = newFilePath;
-        }
+        // Aggiorna il titolo della nota nell'userData
+        node.userData.noteTitle = newTitle;
 
-        // Move node in the map
-        this.nodes.delete(oldUniqueId);
-        this.nodes.set(newUniqueId, node);
+        // Sposta il nodo nella mappa
+        this.nodes.delete(oldTitle);
+        this.nodes.set(newTitle, node);
 
-        // Update color pulse data
-        const pulseData = this.colorPulseData.get(oldUniqueId);
+        // Aggiorna i dati di pulsazione colore
+        const pulseData = this.colorPulseData.get(oldTitle);
         if (pulseData) {
-            this.colorPulseData.delete(oldUniqueId);
-            this.colorPulseData.set(newUniqueId, pulseData);
+            this.colorPulseData.delete(oldTitle);
+            this.colorPulseData.set(newTitle, pulseData);
         }
 
-        // Update file path
-        this.nodeFilePaths.delete(oldUniqueId);
+        // Aggiorna il percorso del file
+        this.nodeFilePaths.delete(oldTitle);
         if (newFilePath) {
-            this.nodeFilePaths.set(newUniqueId, newFilePath);
+            this.nodeFilePaths.set(newTitle, newFilePath);
         }
 
-        // Update label
-        this.removeLabelForNode(oldUniqueId);
-        // New label will be created automatically in next update
+        // Aggiorna la label
+        this.removeLabelForNode(oldTitle);
+        // La nuova label verrà creata automaticamente nel prossimo update
 
-        console.log(`Node renamed: ${oldUniqueId} -> ${newUniqueId}`);
+        console.log(`Nodo rinominato: ${oldTitle} -> ${newTitle}`);
     }
 }
-
-
 
 class LinkParticleSystem {
     scene: THREE.Scene;
