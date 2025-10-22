@@ -7,7 +7,6 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 
 
 
-
 // Remember to rename these classes and interfaces!
 // Constants
 const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
@@ -15,7 +14,6 @@ const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
 
 interface PluginSettings {
     forces: {
-        gravity: number;
         repulsion: number;
         damping: number;
         centerAttraction: number;
@@ -38,7 +36,6 @@ interface PluginSettings {
 
 const DEFAULT_SETTINGS: PluginSettings = {
     forces: {
-        gravity: 0.02,
         repulsion: 0.8,
         damping: 0.90,
         centerAttraction: 0.001,
@@ -165,7 +162,6 @@ export default class MyPlugin extends Plugin {
 
             // Update forces in the GraphView's GravityGraph
 			this.graphView.gravityGraph.forces = {
-				gravity: this.settings.forces.gravity,
 				repulsion: this.settings.forces.repulsion,
 				damping: this.settings.forces.damping,
 				centerAttraction: this.settings.forces.centerAttraction,
@@ -240,29 +236,6 @@ class SettingsTab extends PluginSettingTab {
 		// Forces settings header
 		new Setting(containerEl).setName('Physics forces').setHeading();
 
-		// Gravity setting
-		new Setting(containerEl)
-			.setName('Gravity')
-			.setDesc('Controls downward force applied to nodes. Actually useless to change at the moment')
-			.addSlider(slider => slider
-				.setLimits(0.01, 0.1, 0.01)
-				.setValue(this.plugin.settings.forces?.gravity ?? 0.02)
-				.setDynamicTooltip()
-				.onChange(async (value) => {
-					if (!this.plugin.settings.forces) {
-						this.plugin.settings.forces = {
-							gravity: 0.02,
-							repulsion: 0.8,
-							damping: 0.90,
-							centerAttraction: 0.001,
-							linkStrength: 0.03
-						};
-					}
-					this.plugin.settings.forces.gravity = value;
-					await this.plugin.saveSettings();
-					this.plugin.updateSettingsParameters();
-				}));
-
 		// Repulsion setting
 		new Setting(containerEl)
 			.setName('Repulsion')
@@ -274,7 +247,6 @@ class SettingsTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					if (!this.plugin.settings.forces) {
 						this.plugin.settings.forces = {
-							gravity: 0.02,
 							repulsion: 0.8,
 							damping: 0.90,
 							centerAttraction: 0.001,
@@ -297,7 +269,6 @@ class SettingsTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					if (!this.plugin.settings.forces) {
 						this.plugin.settings.forces = {
-							gravity: 0.02,
 							repulsion: 0.8,
 							damping: 0.90,
 							centerAttraction: 0.001,
@@ -320,7 +291,6 @@ class SettingsTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					if (!this.plugin.settings.forces) {
 						this.plugin.settings.forces = {
-							gravity: 0.02,
 							repulsion: 0.8,
 							damping: 0.90,
 							centerAttraction: 0.001,
@@ -343,7 +313,6 @@ class SettingsTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					if (!this.plugin.settings.forces) {
 						this.plugin.settings.forces = {
-							gravity: 0.02,
 							repulsion: 0.8,
 							damping: 0.90,
 							centerAttraction: 0.001,
@@ -363,7 +332,6 @@ class SettingsTab extends PluginSettingTab {
 				.setButtonText('Reset to Defaults')
 				.onClick(async () => {
 					this.plugin.settings.forces = {
-						gravity: 0.02,
 						repulsion: 0.8,
 						damping: 0.90,
 						centerAttraction: 0.001,
@@ -1663,7 +1631,6 @@ class GravityGraph {
     labelContainer: HTMLElement;
     links: Array<{from: THREE.Object3D, to: THREE.Object3D, line: THREE.Line}>;
     forces: {
-        gravity: number;
         repulsion: number;
         damping: number;
         centerAttraction: number;
@@ -1696,7 +1663,6 @@ class GravityGraph {
         this.labelContainer = labelContainer;
         this.links = [];
         this.forces = {
-            gravity: 0.02,
             repulsion: 0.8,
             damping: 0.90,	
             centerAttraction: 0.001,
