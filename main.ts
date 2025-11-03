@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, ItemView, TFile, TAbstractFile} from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, ItemView, TFile, TAbstractFile, View} from 'obsidian';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -11,6 +11,18 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 // Constants
 const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
 
+class PhysicsMesh extends THREE.Mesh {
+    velocity: THREE.Vector3;
+    force: THREE.Vector3;
+    mass: number;
+
+    constructor(geometry: THREE.BufferGeometry, material: THREE.Material | THREE.Material[]) {
+        super(geometry, material);
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.force = new THREE.Vector3(0, 0, 0);
+        this.mass = 1;
+    }
+}
 
 interface PluginSettings {
     forces: {
@@ -116,7 +128,7 @@ export default class MyPlugin extends Plugin {
 			VIEW_TYPE_3D_GRAPH,
 			(leaf) => {
 				const view = new GraphView(leaf);
-				(view as any).plugin = plugin;
+				view.plugin = plugin; //Removed cast to any, idk why it was there
 				plugin.graphView = view;
 				return view;
 			}
@@ -307,7 +319,7 @@ class SettingsTab extends PluginSettingTab {
 			.setName('Link strength')
 			.setDesc('Controls how strongly connected nodes attract each other')
 			.addSlider(slider => slider
-				.setLimits(1, 10, 1)
+				.setLimits(0.1, 10, 0.1) // was 1-10
 				.setValue(this.plugin.settings.forces?.linkStrength*100)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
@@ -610,11 +622,6 @@ class SettingsTab extends PluginSettingTab {
                             this.plugin.updateSettingsParameters();
                             this.display(); // Refresh the UI
                         }));     
-
-
-
-
-
 	}
 
     // Other Settings class methods
@@ -1125,9 +1132,9 @@ class GraphView extends ItemView {
     }
 
 	getCurrentActiveNote(): string | null {
-		const activeLeaf = this.app.workspace.activeLeaf;
-		if (activeLeaf?.view.getViewType() === 'markdown') {
-			const markdownView = activeLeaf.view as any;
+        const activeLeafView = this.app.workspace.getActiveViewOfType(MarkdownView) // Removed use of deprecated view system
+		if (activeLeafView?.getViewType() === 'markdown') {
+			const markdownView = activeLeafView as MarkdownView;
 			return markdownView.file?.basename || null;
 		}
 		return null;
@@ -1135,13 +1142,13 @@ class GraphView extends ItemView {
 
     // NEW: Get current active note path
     getCurrentActiveNotePath(): string | null {
-        const activeLeaf = this.app.workspace.activeLeaf;
-        if (activeLeaf?.view.getViewType() === 'markdown') {
-            const markdownView = activeLeaf.view as any;
-            return markdownView.file?.path || null;
-        }
-        return null;
-    }
+        const activeLeafView = this.app.workspace.getActiveViewOfType(MarkdownView) // Removed use of deprecated view system
+		if (activeLeafView?.getViewType() === 'markdown') {
+			const markdownView = activeLeafView as MarkdownView;
+			return markdownView.file?.path || null;
+		}
+		return null;
+	}
 
     // MODIFIED: Set focused node by unique ID instead of name
     setFocusedNodeByUniqueId(uniqueId: string): void {
@@ -1626,10 +1633,10 @@ class GraphView extends ItemView {
 // Updated GravityGraph class that handles node creation internally
 class GravityGraph {
     scene: THREE.Scene;
-    nodes: Map<string, THREE.Object3D>;
+    nodes: Map<string, PhysicsMesh>;
     labels: Map<string, HTMLElement>;
     labelContainer: HTMLElement;
-    links: Array<{from: THREE.Object3D, to: THREE.Object3D, line: THREE.Line}>;
+    links: Array<{from: PhysicsMesh, to: PhysicsMesh, line: THREE.Line}>;
     forces: {
         repulsion: number;
         damping: number;
@@ -1658,7 +1665,7 @@ class GravityGraph {
 
     constructor(scene: THREE.Scene, labelContainer: HTMLElement) {
         this.scene = scene;
-        this.nodes = new Map<string, THREE.Object3D>();
+        this.nodes = new Map<string, PhysicsMesh>();
         this.labels = new Map<string, HTMLElement>();
         this.labelContainer = labelContainer;
         this.links = [];
@@ -1728,17 +1735,14 @@ class GravityGraph {
             emissive: nodeColor,
             emissiveIntensity: 0.5,
         });
-        const mesh = new THREE.Mesh(geometry, material);
+
+        const mesh = new PhysicsMesh(geometry, material);
         
         // Store both unique ID and display name in userData
         mesh.userData.noteTitle = nodeTitle; // Display name for UI
         mesh.userData.uniqueId = uniqueId;   // Unique ID for tracking
         mesh.userData.filePath = filePath;   // File path for reference
 
-        // Add physics properties to the mesh
-        (mesh as any).velocity = new THREE.Vector3(0, 0, 0);
-        (mesh as any).force = new THREE.Vector3(0, 0, 0);
-        (mesh as any).mass = 1;
         
         this.nodes.set(uniqueId, mesh); // Use unique ID as key
         this.scene.add(mesh);
