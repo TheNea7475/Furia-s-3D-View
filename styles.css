@@ -9,7 +9,7 @@
     border: 1px solid var(--interactive-accent);
     backdrop-filter: blur(6px); /* blur what's behind */
     -webkit-backdrop-filter: blur(6px); /* Safari support */
-    min-width: 10%;
+    min-width: 10vh;
     max-width: 10vh;
     word-break: break-word;     /* Allows breaking long words at arbitrary points */
     overflow-wrap: break-word;  /* Ensures breaking only when needed */
