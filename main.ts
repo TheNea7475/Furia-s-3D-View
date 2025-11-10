@@ -159,11 +159,11 @@ export default class MyPlugin extends Plugin {
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-		});
+		//this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+		//});
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		//this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 	}
 
 	onunload() {
@@ -608,38 +608,67 @@ class SettingsTab extends PluginSettingTab {
                     const currentColor = this.plugin.settings.folderColors[folderPath] || 'inherited';
                     
                     const setting = new Setting(containerEl)
-                        .setName(`📁 ${folderPath}`)
-                        .addDropdown(dropdown => dropdown
-                            .addOption('inherited', 'Inherited (use default)')
-                            .addOption('custom', 'Custom Color')
-                            .setValue(currentColor === 'inherited' ? 'inherited' : 'custom')
-                            .onChange(async (value) => {
-                                if (value === 'inherited') {
-                                    this.plugin.settings.folderColors[folderPath] = 'inherited';
-                                    await this.plugin.saveSettings();
-                                    this.plugin.updateSettingsParameters();
-                                    this.display(); // Refresh to hide color picker
-                                } else {
-                                    // Set default custom color if none exists
-                                    if (!this.plugin.settings.folderColors[folderPath] ||
-                                        this.plugin.settings.folderColors[folderPath] === 'inherited') {
-                                        this.plugin.settings.folderColors[folderPath] = this.plugin.settings.defaultNodeColor;
-                                    }
-                                    await this.plugin.saveSettings();
-                                    this.plugin.updateSettingsParameters();
-                                    this.display(); // Refresh to show color picker
-                                }
-                            }));
-
-                    // Add color picker conditionally
-                    if (currentColor !== 'inherited') {
-                        setting.addColorPicker(colorPicker => colorPicker
-                            .setValue(currentColor)
-                            .onChange(async (value) => {
-                                this.plugin.settings.folderColors[folderPath] = value;
+                        .setName(`📁 ${folderPath}`);
+                    
+                    let colorPickerComponent: any = null;
+                    
+                    setting.addDropdown(dropdown => dropdown
+                        .addOption('inherited', 'Inherited (use default)')
+                        .addOption('custom', 'Custom Color')
+                        .setValue(currentColor === 'inherited' ? 'inherited' : 'custom')
+                        .onChange(async (value) => {
+                            if (value === 'inherited') {
+                                this.plugin.settings.folderColors[folderPath] = 'inherited';
                                 await this.plugin.saveSettings();
                                 this.plugin.updateSettingsParameters();
-                            }));
+                                
+                                // Remove color picker if it exists
+                                if (colorPickerComponent) {
+                                    // Find and remove only the color picker input element, not its parent container
+                                    const colorInputs = setting.controlEl.querySelectorAll('input[type="color"]');
+                                    colorInputs.forEach(input => {
+                                        // Remove just the input element itself
+                                        input.remove();
+                                    });
+                                    colorPickerComponent = null;
+                                }
+                            } else {
+                                // Set default custom color if none exists
+                                if (!this.plugin.settings.folderColors[folderPath] ||
+                                    this.plugin.settings.folderColors[folderPath] === 'inherited') {
+                                    this.plugin.settings.folderColors[folderPath] = this.plugin.settings.defaultNodeColor;
+                                }
+                                await this.plugin.saveSettings();
+                                this.plugin.updateSettingsParameters();
+                                
+                                // Add color picker if it doesn't exist
+                                if (!colorPickerComponent) {
+                                    setting.addColorPicker(colorPicker => {
+                                        colorPickerComponent = colorPicker;
+                                        return colorPicker
+                                            .setValue(this.plugin.settings.folderColors[folderPath])
+                                            .onChange(async (colorValue) => {
+                                                this.plugin.settings.folderColors[folderPath] = colorValue;
+                                                await this.plugin.saveSettings();
+                                                this.plugin.updateSettingsParameters();
+                                            });
+                                    });
+                                }
+                            }
+                        }));
+
+                    // Add color picker conditionally on initial render
+                    if (currentColor !== 'inherited') {
+                        setting.addColorPicker(colorPicker => {
+                            colorPickerComponent = colorPicker;
+                            return colorPicker
+                                .setValue(currentColor)
+                                .onChange(async (value) => {
+                                    this.plugin.settings.folderColors[folderPath] = value;
+                                    await this.plugin.saveSettings();
+                                    this.plugin.updateSettingsParameters();
+                                });
+                        });
                     }
                 }
 
@@ -1939,11 +1968,48 @@ class GravityGraph {
 
     initializePositions(): void {
         const spread = 8; // Smaller spread for Obsidian notes
-        for (const [title, mesh] of this.nodes) {
-            const x = (Math.random() - 0.5) * spread;
-            const z = (Math.random() - 0.5) * spread;
-            const y = (Math.random() - 0.5) * spread * 0.3;
-            mesh.position.set(x, y, z);
+        const nodes = Array.from(this.nodes.values());
+        const minDistance = 1.0; // Minimum distance between nodes at initialization
+        
+        for (let i = 0; i < nodes.length; i++) {
+            const mesh = nodes[i];
+            let validPosition = false;
+            let attempts = 0;
+            const maxAttempts = 50;
+            
+            // Try to find a position that doesn't overlap with existing nodes
+            while (!validPosition && attempts < maxAttempts) {
+                const x = (Math.random() - 0.5) * spread;
+                const z = (Math.random() - 0.5) * spread;
+                const y = (Math.random() - 0.5) * spread * 0.3;
+                
+                const testPosition = new THREE.Vector3(x, y, z);
+                validPosition = true;
+                
+                // Check distance to all previously positioned nodes
+                for (let j = 0; j < i; j++) {
+                    const otherMesh = nodes[j];
+                    const distance = testPosition.distanceTo(otherMesh.position);
+                    if (distance < minDistance) {
+                        validPosition = false;
+                        break;
+                    }
+                }
+                
+                if (validPosition) {
+                    mesh.position.copy(testPosition);
+                }
+                
+                attempts++;
+            }
+            
+            // If we couldn't find a valid position, place it anyway but add a random offset
+            if (!validPosition) {
+                const x = (Math.random() - 0.5) * spread;
+                const z = (Math.random() - 0.5) * spread;
+                const y = (Math.random() - 0.5) * spread * 0.3;
+                mesh.position.set(x, y, z);
+            }
         }
     }
 
@@ -1961,7 +2027,31 @@ class GravityGraph {
                 const nodeB = nodeArray[j];
                 
                 const distance = nodeA.position.distanceTo(nodeB.position);
-                if (distance < 0.1) continue;
+                
+                // Apply stronger separation force for close nodes to prevent sticking
+                // but with smoother scaling to avoid huge kicks
+                if (distance < 0.8) {
+                    // Moderate force that scales with proximity
+                    const separationStrength = 20.0 / (distance + 0.1); // Gentler scaling
+                    const direction = new THREE.Vector3()
+                        .subVectors(nodeA.position, nodeB.position);
+                    
+                    // If nodes are at exactly the same position, use a random direction
+                    if (direction.lengthSq() < 0.0001) {
+                        direction.set(
+                            (Math.random() - 0.5),
+                            (Math.random() - 0.5),
+                            (Math.random() - 0.5)
+                        );
+                    }
+                    
+                    direction.normalize().multiplyScalar(separationStrength);
+                    
+                    ((nodeA as any).force as THREE.Vector3).add(direction);
+                    ((nodeB as any).force as THREE.Vector3).sub(direction);
+                    
+                    continue;
+                }
                 
                 const repulsionForce = this.forces.repulsion / (distance * distance);
                 const direction = new THREE.Vector3()
@@ -2069,18 +2159,25 @@ class GravityGraph {
             const force = (node as any).force as THREE.Vector3;
 
             if (!isFrozen) {
+                // Apply force to velocity
                 velocity.add(force);
                 
-                // Apply friction - proportional to speed squared (realistic air resistance)
-                if (this.forces.friction > 0) {
+                // Apply friction - but not when experiencing strong forces (like separation)
+                // This prevents friction from stopping nodes that are stuck together
+                const forceMagnitudeSq = force.lengthSq();
+                const hasStrongForce = forceMagnitudeSq > 1.0; // If experiencing strong force, reduce friction
+                
+                if (this.forces.friction > 0 && !hasStrongForce) {
                     const speedSq = velocity.lengthSq();
                     if (speedSq > 0.0001) { // Avoid unnecessary calculations for very small speeds
-                        const speed = Math.sqrt(speedSq); // Reuse already calculated squared length
-                        const frictionMagnitude = this.forces.friction * speedSq; // Use speedSq directly
-                        // Modify velocity in-place instead of creating new vectors
+                        const speed = Math.sqrt(speedSq);
+                        const frictionMagnitude = this.forces.friction * speedSq;
                         const frictionScale = 1 - (frictionMagnitude / speed);
                         velocity.multiplyScalar(Math.max(0, frictionScale));
                     }
+                } else if (hasStrongForce) {
+                    // When experiencing strong forces, apply minimal friction
+                    velocity.multiplyScalar(0.98);
                 }
                 
                 // Enforce max speed limit
@@ -2089,31 +2186,19 @@ class GravityGraph {
                     velocity.normalize().multiplyScalar(this.maxSpeed);
                 }
 
-                // Check if node should be frozen (if freeze is enabled)
+                // When freeze is enabled, freeze ALL nodes immediately
+                // When disabled, all nodes are unfrozen
                 if (this.freeze) {
-                    const speedSq = velocity.lengthSq();
-                    const forceSq = force.lengthSq();
-                    const freezeThreshold = this.velocityTreshold * this.velocityTreshold;
-                    
-                    // Freeze if moving slowly and not affected by significant forces
-                    if (speedSq < freezeThreshold && forceSq < freezeThreshold * 100) {
-                        velocity.set(0, 0, 0);
-                        force.set(0, 0, 0);
-                        this.frozenNodes.add(uniqueId);
-                    }
-                } else {
-                    // Normal velocity threshold behavior when freeze is disabled
-                    if (velocity.lengthSq() < this.velocityTreshold * this.velocityTreshold) {
-                        velocity.set(0, 0, 0);
-                    }
+                    // Freeze this node
+                    velocity.set(0, 0, 0);
+                    force.set(0, 0, 0);
+                    this.frozenNodes.add(uniqueId);
                 }
 
                 node.position.add(velocity);
             } else {
-                // Node is frozen - check if it should be unfrozen due to external forces
-                if (force.lengthSq() > this.velocityTreshold * this.velocityTreshold * 100) {
-                    this.frozenNodes.delete(uniqueId);
-                }
+                // Node is frozen because freeze toggle is ON
+                // Only unfreeze if user toggles freeze OFF (handled in updateSettingsParameters)
             }
 
             // 2. UPDATE COLORS

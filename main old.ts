@@ -27,10 +27,12 @@ class PhysicsMesh extends THREE.Mesh {
 interface PluginSettings {
     forces: {
         repulsion: number;
-        damping: number;
+        friction: number;
         centerAttraction: number;
         linkStrength: number;
     };
+    maxSpeed: number;
+    freeze: boolean;
     maxVisibleDistance: number;
     labelScale: number;
     baseNodeScale: number;
@@ -49,10 +51,12 @@ interface PluginSettings {
 const DEFAULT_SETTINGS: PluginSettings = {
     forces: {
         repulsion: 0.8,
-        damping: 0.90,
+        friction: 0.05,
         centerAttraction: 0.001,
         linkStrength: 0.03
     },
+    maxSpeed: 2.0,
+    freeze: false,
     maxVisibleDistance: 15,
     labelScale: 0.05,
     baseNodeScale: 1,
@@ -175,10 +179,20 @@ export default class MyPlugin extends Plugin {
             // Update forces in the GraphView's GravityGraph
 			this.graphView.gravityGraph.forces = {
 				repulsion: this.settings.forces.repulsion,
-				damping: this.settings.forces.damping,
+				friction: this.settings.forces.friction,
 				centerAttraction: this.settings.forces.centerAttraction,
 				linkStrength: this.settings.forces.linkStrength
 			};
+			
+			// Update max speed
+			this.graphView.gravityGraph.maxSpeed = this.settings.maxSpeed;
+			
+			// Update freeze setting
+			this.graphView.gravityGraph.freeze = this.settings.freeze;
+			// Clear frozen nodes when disabling freeze
+			if (!this.settings.freeze) {
+				this.graphView.gravityGraph.frozenNodes.clear();
+			}
 
 
             // NEW: Update node colors
@@ -260,7 +274,7 @@ class SettingsTab extends PluginSettingTab {
 					if (!this.plugin.settings.forces) {
 						this.plugin.settings.forces = {
 							repulsion: 0.8,
-							damping: 0.90,
+							friction: 0.05,
 							centerAttraction: 0.001,
 							linkStrength: 0.03
 						};
@@ -270,24 +284,50 @@ class SettingsTab extends PluginSettingTab {
 					this.plugin.updateSettingsParameters();
 				}));
 
-		// Damping setting
+		// Friction setting
 		new Setting(containerEl)
-			.setName('Damping')
-			.setDesc('Controls velocity decay (Higer = more movement)')
+			.setName('Friction')
+			.setDesc('Controls velocity decay based on speed (0 = no friction, higher = more friction)')
 			.addSlider(slider => slider
-				.setLimits(0.1, 1, 0.01)
-				.setValue(this.plugin.settings.forces?.damping ?? 0.90)
+				.setLimits(0, 0.2, 0.001)
+				.setValue(this.plugin.settings.forces?.friction ?? 0.05)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
 					if (!this.plugin.settings.forces) {
 						this.plugin.settings.forces = {
 							repulsion: 0.8,
-							damping: 0.90,
+							friction: 0.05,
 							centerAttraction: 0.001,
 							linkStrength: 0.03
 						};
 					}
-					this.plugin.settings.forces.damping = value;
+					this.plugin.settings.forces.friction = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+		// Max Speed setting
+		new Setting(containerEl)
+			.setName('Max Speed')
+			.setDesc('Maximum movement speed for nodes (prevents crashes and weird behavior)')
+			.addSlider(slider => slider
+				.setLimits(0.1, 10, 0.1)
+				.setValue(this.plugin.settings.maxSpeed ?? 2.0)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.maxSpeed = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+		// Freeze setting
+		new Setting(containerEl)
+			.setName('Freeze Nodes')
+			.setDesc('Lock in place nodes that are moving slowly and not affected by significant forces')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.freeze ?? false)
+				.onChange(async (value) => {
+					this.plugin.settings.freeze = value;
 					await this.plugin.saveSettings();
 					this.plugin.updateSettingsParameters();
 				}));
@@ -304,7 +344,7 @@ class SettingsTab extends PluginSettingTab {
 					if (!this.plugin.settings.forces) {
 						this.plugin.settings.forces = {
 							repulsion: 0.8,
-							damping: 0.90,
+							friction: 0.05,
 							centerAttraction: 0.001,
 							linkStrength: 0.03
 						};
@@ -326,7 +366,7 @@ class SettingsTab extends PluginSettingTab {
 					if (!this.plugin.settings.forces) {
 						this.plugin.settings.forces = {
 							repulsion: 0.8,
-							damping: 0.90,
+							friction: 0.05,
 							centerAttraction: 0.001,
 							linkStrength: 0.03
 						};
@@ -345,7 +385,7 @@ class SettingsTab extends PluginSettingTab {
 				.onClick(async () => {
 					this.plugin.settings.forces = {
 						repulsion: 0.8,
-						damping: 0.90,
+						friction: 0.05,
 						centerAttraction: 0.001,
 						linkStrength: 0.03
 					};
@@ -659,6 +699,7 @@ class GraphView extends ItemView {
     private focusHalos: THREE.Mesh[] | null = null;
 	activeLeafChangeHandler: () => void;
     resizeObserver: ResizeObserver;
+    private resizeTimeout: number | null = null;
     wheelAnimationId: number | null = null;
     currentWheelVelocity: number = 0;
     wheelDamping: number = 0.90;
@@ -803,9 +844,15 @@ class GraphView extends ItemView {
 			let width = container.offsetWidth || 600;
 			let height = container.offsetHeight || 400;
 			
-			this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+			this.renderer = new THREE.WebGLRenderer({ 
+                canvas, 
+                antialias: true,
+                powerPreference: 'high-performance', // Use dedicated GPU if available
+                stencil: false, // Disable stencil buffer for performance
+                depth: true
+            });
 			this.renderer.setSize(width, height);
-			this.renderer.setPixelRatio(window.devicePixelRatio);
+			this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap at 2 for performance
             this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
             this.renderer.toneMappingExposure = 1;
             this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -936,9 +983,9 @@ class GraphView extends ItemView {
             this.renderer.domElement.addEventListener('wheel', this.handleWheelMovement);
 
             // Use ResizeObserver to detect container size changes (panel collapse/expand)
+            // Note: handleResize has built-in debouncing, so this can fire frequently
             this.resizeObserver = new ResizeObserver(() => {
-                    this.handleResize();
-                    console.log("ResizeObserver triggered");
+                this.handleResize();
             });
 
             this.resizeObserver.observe(container);
@@ -1029,7 +1076,7 @@ class GraphView extends ItemView {
                     this.camera.position.addScaledVector(direction, this.currentWheelVelocity);
                     this.controls.target.addScaledVector(direction, this.currentWheelVelocity);
 
-                    // Apply damping
+                    // Apply wheel damping
                     this.currentWheelVelocity *= this.wheelDamping;
 
                     this.wheelAnimationId = requestAnimationFrame(smoothMove);
@@ -1043,18 +1090,34 @@ class GraphView extends ItemView {
     };
 
 	handleResize = () => {
-        setTimeout(() => {
-        if (!this.renderer || !this.camera || !this.controls) return;
-        const container = this.containerEl.children[1] as HTMLElement;
-        const width = container.offsetWidth || 600;
-        const height = container.offsetHeight || 400;
-        this.renderer.setSize(container.offsetWidth, container.offsetHeight);
-        this.camera.aspect = width / height;
-        this.renderer.setPixelRatio(window.devicePixelRatio);
-        this.camera.updateProjectionMatrix();
-        this.composer.setPixelRatio(window.devicePixelRatio);
-        this.composer.setSize(container.offsetWidth,container.offsetHeight);
-        }, 10);
+        // Debounce resize - only execute after user stops resizing
+        if (this.resizeTimeout) {
+            clearTimeout(this.resizeTimeout);
+        }
+        
+        this.resizeTimeout = window.setTimeout(() => {
+            if (!this.renderer || !this.camera || !this.composer) return;
+            
+            const container = this.containerEl.children[1] as HTMLElement;
+            if (!container) return;
+            
+            const width = container.offsetWidth || 600;
+            const height = container.offsetHeight || 400;
+            
+            // Update renderer
+            this.renderer.setSize(width, height, false); // false = don't update style
+            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap at 2 for performance
+            
+            // Update camera
+            this.camera.aspect = width / height;
+            this.camera.updateProjectionMatrix();
+            
+            // Update composer
+            this.composer.setSize(width, height);
+            this.composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            
+            this.resizeTimeout = null;
+        }, 150); // Debounce delay - adjust based on performance needs
 	};
 
     focusOnNode(targetNode: THREE.Object3D): void {
@@ -1573,6 +1636,10 @@ class GraphView extends ItemView {
             cancelAnimationFrame(this.wheelAnimationId);
         }
         
+        if (this.resizeTimeout) {
+            clearTimeout(this.resizeTimeout);
+        }
+        
         cancelAnimationFrame(this.animationFrameId);
         
         // Dispose Three.js resources
@@ -1639,10 +1706,13 @@ class GravityGraph {
     links: Array<{from: PhysicsMesh, to: PhysicsMesh, line: THREE.Line}>;
     forces: {
         repulsion: number;
-        damping: number;
+        friction: number;
         centerAttraction: number;
         linkStrength: number;
     };
+    maxSpeed: number;
+    freeze: boolean;
+    frozenNodes: Set<string>; // Track which nodes are frozen
     isRunning: boolean;
     animationId: number | null;
     particleSystem: LinkParticleSystem;
@@ -1653,6 +1723,12 @@ class GravityGraph {
     linkScaleMultiplier: number = 0.1;
     nodeFilePaths: Map<string, string>;
     currentSettings: PluginSettings | null;
+    
+    // Performance optimization: reverse lookup map for node to uniqueId
+    private nodeToUniqueId: Map<PhysicsMesh, string>;
+    
+    // Shared geometry for all nodes (memory optimization)
+    private sharedNodeGeometry: THREE.SphereGeometry;
 
     // Color pulsing properties
     colorPulseData: Map<string, {
@@ -1671,16 +1747,23 @@ class GravityGraph {
         this.links = [];
         this.forces = {
             repulsion: 0.8,
-            damping: 0.90,	
+            friction: 0.05,	
             centerAttraction: 0.001,
             linkStrength: 0.03
         };
+        this.maxSpeed = 2.0;
+        this.freeze = false;
+        this.frozenNodes = new Set<string>();
         this.isRunning = false;
         this.animationId = null;
         this.particleSystem = new LinkParticleSystem(scene);
         this.colorPulseData = new Map();
         this.nodeFilePaths = new Map<string, string>();
+        this.nodeToUniqueId = new Map<PhysicsMesh, string>();
         this.currentSettings = null;
+        
+        // Create shared geometry for all nodes (reduces memory usage significantly)
+        this.sharedNodeGeometry = new THREE.SphereGeometry(0.3, 16, 16);
     }
 
     // Utility methods for label management
@@ -1690,6 +1773,10 @@ class GravityGraph {
         label.className = 'graph-label';
         label.textContent = text;
         label.setAttribute('data-unique-id', uniqueId); // Store unique ID for reference
+        
+        // Only set positioning - let CSS handle everything else
+        label.style.position = 'absolute';
+        
         this.labelContainer.appendChild(label);
         return label;
     }
@@ -1723,8 +1810,7 @@ class GravityGraph {
         // Use displayName for visual purposes, uniqueId for internal tracking
         const nodeTitle = displayName || uniqueId;
         
-        // Create the node mesh
-        const geometry = new THREE.SphereGeometry(0.3, 16, 16);
+        // Use shared geometry for all nodes (memory optimization)
         if (filePath) {
             this.nodeFilePaths.set(uniqueId, filePath); // Use unique ID as key
         }
@@ -1736,7 +1822,7 @@ class GravityGraph {
             emissiveIntensity: 0.5,
         });
 
-        const mesh = new PhysicsMesh(geometry, material);
+        const mesh = new PhysicsMesh(this.sharedNodeGeometry, material);
         
         // Store both unique ID and display name in userData
         mesh.userData.noteTitle = nodeTitle; // Display name for UI
@@ -1745,6 +1831,7 @@ class GravityGraph {
 
         
         this.nodes.set(uniqueId, mesh); // Use unique ID as key
+        this.nodeToUniqueId.set(mesh, uniqueId); // Add reverse lookup for performance
         this.scene.add(mesh);
         
         // Initialize color pulse data with unique ID as key
@@ -1955,16 +2042,11 @@ class GravityGraph {
     // MODIFIED: Update the optimized updateAllNodes method
     updateAllNodes(camera?: THREE.Camera): void {
         // Pre-calculate connection counts for scaling using unique IDs
+        // OPTIMIZED: Use reverse lookup map instead of nested loop
         const nodeConnectionCounts = new Map<string, number>();
         for (const link of this.links) {
-            // Find unique IDs by reverse lookup through userData
-            let fromUniqueId = '';
-            let toUniqueId = '';
-            
-            for (const [uniqueId, node] of this.nodes) {
-                if (node === link.from) fromUniqueId = uniqueId;
-                if (node === link.to) toUniqueId = uniqueId;
-            }
+            const fromUniqueId = this.nodeToUniqueId.get(link.from);
+            const toUniqueId = this.nodeToUniqueId.get(link.to);
             
             if (fromUniqueId && toUniqueId) {
                 nodeConnectionCounts.set(fromUniqueId, (nodeConnectionCounts.get(fromUniqueId) || 0) + 1);
@@ -1979,18 +2061,60 @@ class GravityGraph {
 
         // SINGLE LOOP: Process all node updates using unique IDs
         for (const [uniqueId, node] of this.nodes) {
+            // Check if node is frozen - skip physics if it is
+            const isFrozen = this.frozenNodes.has(uniqueId);
+            
             // 1. UPDATE POSITIONS
             const velocity = (node as any).velocity as THREE.Vector3;
             const force = (node as any).force as THREE.Vector3;
 
-            velocity.add(force);
-            velocity.multiplyScalar(this.forces.damping);
+            if (!isFrozen) {
+                velocity.add(force);
+                
+                // Apply friction - proportional to speed squared (realistic air resistance)
+                if (this.forces.friction > 0) {
+                    const speedSq = velocity.lengthSq();
+                    if (speedSq > 0.0001) { // Avoid unnecessary calculations for very small speeds
+                        const speed = Math.sqrt(speedSq); // Reuse already calculated squared length
+                        const frictionMagnitude = this.forces.friction * speedSq; // Use speedSq directly
+                        // Modify velocity in-place instead of creating new vectors
+                        const frictionScale = 1 - (frictionMagnitude / speed);
+                        velocity.multiplyScalar(Math.max(0, frictionScale));
+                    }
+                }
+                
+                // Enforce max speed limit
+                const currentSpeed = velocity.length();
+                if (currentSpeed > this.maxSpeed) {
+                    velocity.normalize().multiplyScalar(this.maxSpeed);
+                }
 
-            if (velocity.lengthSq() < this.velocityTreshold * this.velocityTreshold) {
-                velocity.set(0, 0, 0);
+                // Check if node should be frozen (if freeze is enabled)
+                if (this.freeze) {
+                    const speedSq = velocity.lengthSq();
+                    const forceSq = force.lengthSq();
+                    const freezeThreshold = this.velocityTreshold * this.velocityTreshold;
+                    
+                    // Freeze if moving slowly and not affected by significant forces
+                    if (speedSq < freezeThreshold && forceSq < freezeThreshold * 100) {
+                        velocity.set(0, 0, 0);
+                        force.set(0, 0, 0);
+                        this.frozenNodes.add(uniqueId);
+                    }
+                } else {
+                    // Normal velocity threshold behavior when freeze is disabled
+                    if (velocity.lengthSq() < this.velocityTreshold * this.velocityTreshold) {
+                        velocity.set(0, 0, 0);
+                    }
+                }
+
+                node.position.add(velocity);
+            } else {
+                // Node is frozen - check if it should be unfrozen due to external forces
+                if (force.lengthSq() > this.velocityTreshold * this.velocityTreshold * 100) {
+                    this.frozenNodes.delete(uniqueId);
+                }
             }
-
-            node.position.add(velocity);
 
             // 2. UPDATE COLORS
             const pulseData = this.colorPulseData.get(uniqueId); // Use unique ID
@@ -2161,9 +2285,9 @@ class GravityGraph {
         // Remove the node from scene
         this.scene.remove(node);
         
-        // Dispose node geometry and material
+        // Dispose node material but NOT geometry (it's shared)
         if (node instanceof THREE.Mesh) {
-            node.geometry.dispose();
+            // Don't dispose geometry - it's shared among all nodes
             if (Array.isArray(node.material)) {
                 node.material.forEach(mat => mat.dispose());
             } else {
@@ -2172,6 +2296,7 @@ class GravityGraph {
         }
         
         this.nodes.delete(uniqueId);
+        this.nodeToUniqueId.delete(node); // Clean up reverse lookup
 
         // Remove color pulse data
         this.colorPulseData.delete(uniqueId);
