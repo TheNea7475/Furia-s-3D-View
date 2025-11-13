@@ -323,7 +323,7 @@ class SettingsTab extends PluginSettingTab {
 		// Freeze setting
 		new Setting(containerEl)
 			.setName('Freeze Nodes')
-			.setDesc('Lock in place nodes that are moving slowly and not affected by significant forces')
+			.setDesc('Lock nodes in place')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.freeze ?? false)
 				.onChange(async (value) => {
@@ -1129,7 +1129,7 @@ class GraphView extends ItemView {
             
             const container = this.containerEl.children[1] as HTMLElement;
             if (!container) return;
-            
+            /*
             const width = container.offsetWidth || 600;
             const height = container.offsetHeight || 400;
             
@@ -1144,7 +1144,8 @@ class GraphView extends ItemView {
             // Update composer
             this.composer.setSize(width, height);
             this.composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            
+            */
+           
             this.resizeTimeout = null;
         }, 150); // Debounce delay - adjust based on performance needs
 	};
