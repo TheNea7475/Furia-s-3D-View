@@ -46,6 +46,7 @@ interface PluginSettings {
     maxParticles: number;
     particlesSpawnRate: number;
     particlesShuffleDelay: number;
+    particleSize: number;
 }
 
 const DEFAULT_SETTINGS: PluginSettings = {
@@ -70,6 +71,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
     maxParticles: 500,
     particlesSpawnRate: 2000, //milliseconds
     particlesShuffleDelay: 10, //milliseconds
+    particleSize: 0.1
 }
 
 
@@ -210,6 +212,7 @@ export default class MyPlugin extends Plugin {
             this.graphView.gravityGraph.setMaxParticles(this.settings.maxParticles)
             this.graphView.gravityGraph.setParticleSpawnRate(this.settings.particlesSpawnRate)
             this.graphView.gravityGraph.setParticlesShuffleDelay(this.settings.particlesShuffleDelay)
+            this.graphView.gravityGraph.setParticleSize(this.settings.particleSize)
 
             //Update bloom settings, if composer ready
             if (this.graphView.bloomPass) {
@@ -479,6 +482,22 @@ class SettingsTab extends PluginSettingTab {
 						this.plugin.settings.maxParticles = 500
 					}
 					this.plugin.settings.maxParticles = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateSettingsParameters();
+				}));
+
+            new Setting(containerEl)
+			.setName('Particles size')
+			.setDesc("Set particles size")
+			.addSlider(slider => slider
+				.setLimits(0.01, 1, 0.01)
+				.setValue(this.plugin.settings.particleSize)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					if (!this.plugin.settings.particleSize) {
+						this.plugin.settings.particleSize = 0.1
+					}
+					this.plugin.settings.particleSize = value;
 					await this.plugin.saveSettings();
 					this.plugin.updateSettingsParameters();
 				}));
@@ -1750,6 +1769,7 @@ class GravityGraph {
     maxVisibleDistance: number = 8;
     labelScale: number = 0.05;
     baseNodeScale: number = 1;
+    particleSize: number = 0.1
     linkScaleMultiplier: number = 0.1;
     nodeFilePaths: Map<string, string>;
     currentSettings: PluginSettings | null;
@@ -1955,7 +1975,7 @@ class GravityGraph {
         const material = new THREE.LineBasicMaterial({
             color: 0x444444,
             transparent: true,
-            opacity: 0.4,
+            opacity: 0.6,
             depthWrite: false,
             depthTest: true,
         });
@@ -2116,6 +2136,12 @@ class GravityGraph {
         }
         else{
             console.log("Particle system not initialized")
+        }
+    }
+
+    setParticleSize(particleSize: number): void{
+        if (this.particleSystem) {
+            this.particleSystem.setParticlesShuffleDelay(particleSize);
         }
     }
 
@@ -2333,7 +2359,7 @@ class GravityGraph {
 
     calcLinkScale(connectionCount: number): number {
         if (connectionCount <= 1) {
-            return 1
+            return this.baseNodeScale
         }
         else {
             return this.baseNodeScale + (connectionCount * this.linkScaleMultiplier);
@@ -2471,6 +2497,7 @@ class LinkParticleSystem {
     }>;
     particlePool: THREE.Mesh[];
     maxParticles: number;
+    particleSize: number = 0.1
     spawnRate: number;
     lastSpawn: number;
     particlesDelay: number;
@@ -2608,6 +2635,10 @@ class LinkParticleSystem {
     setParticlesShuffleDelay(delay: number): void{
 		this.particlesDelay = delay;
 	}
+
+    setParticleSize(size: number): void{
+        this.particleSize = size
+    }
 
     clearParticles(): void {
         for (const particle of this.particles) {
