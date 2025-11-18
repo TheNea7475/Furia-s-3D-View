@@ -629,7 +629,7 @@ class SettingsTab extends PluginSettingTab {
                     const setting = new Setting(containerEl)
                         .setName(`📁 ${folderPath}`);
                     
-                    let colorPickerComponent: any = null;
+                    let colorPickerComponent: boolean = false;
                     
                     setting.addDropdown(dropdown => dropdown
                         .addOption('inherited', 'Inherited (use default)')
@@ -649,7 +649,7 @@ class SettingsTab extends PluginSettingTab {
                                         // Remove just the input element itself
                                         input.remove();
                                     });
-                                    colorPickerComponent = null;
+                                    colorPickerComponent = false;
                                 }
                             } else {
                                 // Set default custom color if none exists
@@ -663,7 +663,7 @@ class SettingsTab extends PluginSettingTab {
                                 // Add color picker if it doesn't exist
                                 if (!colorPickerComponent) {
                                     setting.addColorPicker(colorPicker => {
-                                        colorPickerComponent = colorPicker;
+                                        colorPickerComponent = true;
                                         return colorPicker
                                             .setValue(this.plugin.settings.folderColors[folderPath])
                                             .onChange(async (colorValue) => {
@@ -679,7 +679,7 @@ class SettingsTab extends PluginSettingTab {
                     // Add color picker conditionally on initial render
                     if (currentColor !== 'inherited') {
                         setting.addColorPicker(colorPicker => {
-                            colorPickerComponent = colorPicker;
+                            colorPickerComponent = true;
                             return colorPicker
                                 .setValue(currentColor)
                                 .onChange(async (value) => {
@@ -1835,16 +1835,6 @@ class GravityGraph {
         const label = this.labels.get(uniqueId);
         if (label) {
             label.textContent = newText;
-        }
-    }
-
-    setLabelVisibility(visible: boolean): void {
-        for (const [title, label] of this.labels) {
-            if (visible) {
-                label.classList.remove('hidden');
-            } else {
-                label.classList.add('hidden');
-            }
         }
     }
 

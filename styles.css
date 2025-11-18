@@ -2,6 +2,7 @@
     position: absolute;
     background: transparent;
     color: var(--interactive-accent);
+    background-color: var(--background-primary);
     padding: 4px;
     border-radius: 4px;
     font-size: 12px;
@@ -14,9 +15,4 @@
     word-break: break-word;     /* Allows breaking long words at arbitrary points */
     overflow-wrap: break-word;  /* Ensures breaking only when needed */
     text-align: center;
-}
-
-.graph-label.hidden {
-    opacity: 0;
-    pointer-events: none;
 }
