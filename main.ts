@@ -488,7 +488,7 @@ class SettingsTab extends PluginSettingTab {
 
             new Setting(containerEl)
 			.setName('Particles size')
-			.setDesc("Set particles size")
+			.setDesc("Set particles size.")
 			.addSlider(slider => slider
 				.setLimits(0.01, 1, 0.01)
 				.setValue(this.plugin.settings.particleSize)
@@ -1071,8 +1071,8 @@ class GraphView extends ItemView {
                     newNode.userData.filePath = file.path;
                     
                     // Give it some initial velocity for more dynamic appearance
-                    if ((newNode as any).velocity) {
-                        (newNode as any).velocity.set(
+                    if (newNode.velocity) {
+                        newNode.velocity.set(
                             (Math.random() - 0.5) * 0.1,
                             (Math.random() - 0.5) * 0.1,
                             (Math.random() - 0.5) * 0.1
@@ -1617,8 +1617,8 @@ class GraphView extends ItemView {
         node.position.set(x, y, z);
 
         // Inizializza velocità e forza
-        (node as any).velocity = new THREE.Vector3(0, 0, 0);
-        (node as any).force = new THREE.Vector3(0, 0, 0);
+        (node as PhysicsMesh).velocity = new THREE.Vector3(0, 0, 0);
+        (node as PhysicsMesh).force = new THREE.Vector3(0, 0, 0);
     }
 
     private async initializeLinkCache() {
@@ -2027,7 +2027,7 @@ class GravityGraph {
     calculateForces(): void {
         // Reset forces
         for (const [title, node] of this.nodes) {
-            ((node as any).force as THREE.Vector3).set(0, 0, 0);
+            (node.force as THREE.Vector3).set(0, 0, 0);
         }
 
         // Repulsion between all nodes
@@ -2095,7 +2095,7 @@ class GravityGraph {
             const centerForce = new THREE.Vector3()
                 .copy(node.position)
                 .multiplyScalar(-this.forces.centerAttraction);
-            ((node as any).force as THREE.Vector3).add(centerForce);
+            (node.force as THREE.Vector3).add(centerForce);
         }
     }
 
@@ -2132,6 +2132,7 @@ class GravityGraph {
     setParticleSize(particleSize: number): void{
         if (this.particleSystem) {
             this.particleSystem.setParticleSize(particleSize);
+            this.particleSystem.initializeParticlePool()
         }
     }
 
@@ -2172,8 +2173,8 @@ class GravityGraph {
             const isFrozen = this.frozenNodes.has(uniqueId);
             
             // 1. UPDATE POSITIONS
-            const velocity = (node as any).velocity as THREE.Vector3;
-            const force = (node as any).force as THREE.Vector3;
+            const velocity = node.velocity as THREE.Vector3;
+            const force = node.force as THREE.Vector3;
 
             if (!isFrozen) {
                 // Apply force to velocity
@@ -2502,11 +2503,11 @@ class LinkParticleSystem {
         this.initializeParticlePool();
     }
 
-    private initializeParticlePool(): void {
+    initializeParticlePool(): void {
         this.dispose()
         // Pre-create particle meshes for performance
         for (let i = 0; i < this.maxParticles; i++) {
-            const geometry = new THREE.SphereGeometry(0.1, 8, 8);
+            const geometry = new THREE.SphereGeometry(this.particleSize, 8, 8);
             const material = new THREE.MeshStandardMaterial({ color: 0xffffff });
             const particle = new THREE.Mesh(geometry, material);
             particle.visible = false;
