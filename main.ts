@@ -2131,7 +2131,7 @@ class GravityGraph {
 
     setParticleSize(particleSize: number): void{
         if (this.particleSystem) {
-            this.particleSystem.setParticlesShuffleDelay(particleSize);
+            this.particleSystem.setParticleSize(particleSize);
         }
     }
 
